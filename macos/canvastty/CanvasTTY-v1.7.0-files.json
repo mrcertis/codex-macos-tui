@@ -1,0 +1,125 @@
+{
+  "baseline": "howdeploy/CanvasTTY v1.7.0",
+  "includedRoots": [
+    "src",
+    "tests"
+  ],
+  "patchSha256": "59047005f5446b0e8eaa91df9ac18e69d00b9b3444e436f289c9329e6fb43038",
+  "files": [
+    {
+      "path": "src/main/index.ts",
+      "beforeSha256": "fe6c87cf244469fef87b19bca6439d2da8778824f116178a23e9c02ea7d5e19c",
+      "afterSha256": "c74745b02725f4e267a9c0c0a42d47424c50718c58a8236057e137f898435d37"
+    },
+    {
+      "path": "src/main/ipc/registerIpc.ts",
+      "beforeSha256": "5e91602ed483c99d36df86ed6931c44182159ba20d62dfcbb0516db5f5cb4802",
+      "afterSha256": "c92dcfde03f93bfd0ae7f8f7713c8fbe3ab5f1a531b166b765cd65f4abf9700a"
+    },
+    {
+      "path": "src/main/services/CanvasNavigationOverride.ts",
+      "beforeSha256": "4ec3d03e2449c789f127ab75387d00007e55c00c573dbfe2d26e6bcaebd43b0b",
+      "afterSha256": "3f4bf3200b9319eb9a4347bc5c6440b3c2ebc7ffdd8118a08483fe0cb19260c1"
+    },
+    {
+      "path": "src/main/services/TerminalManager.ts",
+      "beforeSha256": "c127ff43215d20713775ccb79bfc70862c9953f42e7bc7723f93f81ad4897ddf",
+      "afterSha256": "6026c097979a1fb62f9fe43ae91906c43c8f98743de288b62e8129ad6d350998"
+    },
+    {
+      "path": "src/main/services/agent-browser/AgentBrowserBridge.ts",
+      "beforeSha256": "482d8a28bcf446c170b22bb6893c18af386abdd1d46134d34f5ea2c1a07dab74",
+      "afterSha256": "01ad9f8d46e784b5c541ad92a61380e292cd348d634b393d0b6552033017a906"
+    },
+    {
+      "path": "src/main/services/agent-browser/AgentGateway.ts",
+      "beforeSha256": "90f693ea6f3ba5668cfb26812ce5b9d9fd7496cc08f435bd4d6007b834b44758",
+      "afterSha256": "8c987750aa00e91124851e933cccceac2a2cd04290a0edfd82812cfd45f0c5b1"
+    },
+    {
+      "path": "src/main/services/terminalLaunch.ts",
+      "beforeSha256": "b11b16a3e270a495edd72469e79fb0e5cb11b15c5f3e8f91c71b4c66f6a868f8",
+      "afterSha256": "d0c7a964670c6db932e445da962f75a37ae91e7cc5765b534f44deb326cc0594"
+    },
+    {
+      "path": "src/preload/index.ts",
+      "beforeSha256": "79571083d1384da7f77f27894b97c3430e6062743cfc32fe9575c9d80b55e3fe",
+      "afterSha256": "81305d00a0b7e6e8eff2d3b58c74527b1d91053fb63a5be1affb3890af8e232d"
+    },
+    {
+      "path": "src/renderer/src/App.tsx",
+      "beforeSha256": "1e3c745999eae2a298e8d47db1b20895f88b61e78cefb3cbdf4dac4a827892e9",
+      "afterSha256": "8bf7de6ac781aae0e19ed71755126c17d02febc2ad7c0ab95ed36156e7c624b9"
+    },
+    {
+      "path": "src/renderer/src/features/terminal/TerminalCard.tsx",
+      "beforeSha256": "6c8bfa894040b62df0bc1368f3bc6285c4261670bad349a3c16ccf450ab6ffd3",
+      "afterSha256": "b1f1441374819045380451fca65f20ca614422545b0e99d7e31f65139c41bec2"
+    },
+    {
+      "path": "src/renderer/src/features/terminal/terminalShortcuts.ts",
+      "beforeSha256": "516c9ea0520923e3c27d28139bbbc7577fc2e0306e152d239975fc17c6b4e551",
+      "afterSha256": "1507fbe6f0a46993b1612e90f2e669fe445b6f27dd2586846e84da3a66f868a5"
+    },
+    {
+      "path": "src/renderer/src/features/workspace/WorkspaceCanvas.tsx",
+      "beforeSha256": "ac04951bf4140368654c7a0a6509275733876165ce8745672f9e78e4c6cf5bc9",
+      "afterSha256": "f9b817d312ff61390ffe1022036a093caf82dd61b04aeb6a19c3c70c94c6dd89"
+    },
+    {
+      "path": "src/renderer/src/lib/shortcuts.ts",
+      "beforeSha256": "f86bbea1be73667bbed3a68ba095293dfdf02c4c7a0375b95c4e806a0dfd4560",
+      "afterSha256": "ef3a13b2ece7fe836a9b3f3be5db13ab931479f89e2fba10501362749411129c"
+    },
+    {
+      "path": "src/shared/contracts.ts",
+      "beforeSha256": "546617a5e1f761667ae621db072a26f18481aa64a3cdc8e5f0b0c67710841435",
+      "afterSha256": "55f580e555583c8201f7c31997b1b6dced22cef025e2109a9529c7c60923138c"
+    },
+    {
+      "path": "tests/agent-browser-helper.test.mjs",
+      "beforeSha256": "f7f717c98ae820e4fd704ca332c8e40a2944691d047c697a2ffce8da2a726b06",
+      "afterSha256": "e57c17e528bf24fb3c6bbb39ee785c6a43a7b7e90713f02a5ac2f3fc6de1c27a"
+    },
+    {
+      "path": "tests/agent-browser-protocol-gateway.test.mjs",
+      "beforeSha256": "60d6c0b8c5b3862dca037641bab3b1563179b2a7491eabe2c162fc4654620178",
+      "afterSha256": "0734b8cff46d023eae6f2f1ce33346bee4d63266b7b64b888657ca3f891ac209"
+    },
+    {
+      "path": "tests/app-shortcuts.test.mjs",
+      "beforeSha256": "de23be70ce935da6ebd8230f45d5e2986bfdc1aa027caa79a1be7eda8502e1d3",
+      "afterSha256": "e4113901a3e0ad4b5262112e16a64751f9451ebb3f9c60a4d0638eb53cc3418f"
+    },
+    {
+      "path": "tests/auto-profile.test.mjs",
+      "beforeSha256": "0c82fe6dfa908842539b0e0ec34684536a5ab876874b099dc33edd1abc566e21",
+      "afterSha256": "eae1c0bfb1eec254c83d90791b8cd0bf2c6f0ad2bdd55c3323a40a87ddd19944"
+    },
+    {
+      "path": "tests/canvas-navigation-override.test.mjs",
+      "beforeSha256": "0b0c1d2c17db8a60e3457eee3603bd9baeab36800cc6770ea393b2cd33edb4ae",
+      "afterSha256": "e2ef9482f2e5a896f150ad25e9cc5c941388dbd746b741dd62496f3f5b8a63e0"
+    },
+    {
+      "path": "tests/orchestration-launch-role.test.mjs",
+      "beforeSha256": "743901d0eb920cbceb3e6333bffd36e72f58edb4263053bf089a5ece86417d9f",
+      "afterSha256": "c697f1d5469b8a129d54d5d9459ec691a64fd836808e2f643fb26bb872c59434"
+    },
+    {
+      "path": "tests/terminal-launch.test.mjs",
+      "beforeSha256": "bdc08287c38552aa4df5a8208c5bd503564b8a17e5fc2bdf5f2463a921c35600",
+      "afterSha256": "399b8b866eb8dd415cc007f10eed0c6a72d458459f15417014b7fe40ff5ceb75"
+    },
+    {
+      "path": "tests/terminal-lifecycle.test.mjs",
+      "beforeSha256": "edd0e3ca8981f140a8ecbd16debad98549d4ff676783fc6d4d64e228815fb2f6",
+      "afterSha256": "7dc521be0fa55143b9cb6bde5d908e121ebf48920b15d1f1f5d51ce95c1a7b09"
+    },
+    {
+      "path": "tests/terminal-shortcuts.test.mjs",
+      "beforeSha256": "730395cff0e1d765d59c53b456a06af84548ad8edfc94f917dbc50a2bbc591fa",
+      "afterSha256": "dd9332b2114a3d4afa16d792992790a8063254162824eecacaeaa1968eeb4f47"
+    }
+  ]
+}

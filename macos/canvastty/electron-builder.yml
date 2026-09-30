@@ -1,0 +1,11 @@
+extends: ./electron-builder.yml
+directories:
+  output: ../builds/canvastty-macos-native-tui
+mac:
+  extraResources:
+    - from: ../codex-macos-tui/codex-rs/target/debug/canvastty-codex-tui
+      to: codex-native-tui/canvastty-codex-tui
+    - from: ../codex-macos-tui/macos/codex-tui-launch.mjs
+      to: codex-native-tui/codex-tui-launch.mjs
+    - from: ../codex-macos-tui/LICENSE
+      to: codex-native-tui/LICENSE

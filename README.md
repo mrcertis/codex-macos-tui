@@ -1,3 +1,5 @@
+> **macOS TUI fork, based on Codex 0.159.2.** Draft selection with ⌘A and CanvasTTY integration: [build, usage and validation](macos/README.md). This is an independent fork, not an official OpenAI release.
+
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
 <p align="center">
   <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />

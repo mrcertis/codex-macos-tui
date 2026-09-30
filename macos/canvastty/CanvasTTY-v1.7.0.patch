@@ -1,0 +1,1117 @@
+diff --git a/src/main/index.ts b/src/main/index.ts
+--- a/src/main/index.ts
++++ b/src/main/index.ts
+@@ -209,7 +209,10 @@
+     const currentUrl = window.webContents.getURL();
+     if (currentUrl && url !== currentUrl) event.preventDefault();
+   });
+-  canvasNavigationInput?.attach(window.webContents, { preventMouseBindings: false });
++  canvasNavigationInput?.attach(window.webContents, {
++    preventMouseBindings: false,
++    captureMacEditShortcuts: process.platform === "darwin"
++  });
+   // Crash recovery: a dead renderer must never leave the user staring at a
+   // blank window. The application surface is reloaded in place — the same entry
+   // startup loads — so services, sessions and their scrollback stay untouched
+@@ -378,7 +381,10 @@
+     }
+   );
+   if (mainWindow && !mainWindow.isDestroyed()) {
+-    canvasNavigationInput.attach(mainWindow.webContents, { preventMouseBindings: false });
++    canvasNavigationInput.attach(mainWindow.webContents, {
++      preventMouseBindings: false,
++      captureMacEditShortcuts: process.platform === "darwin"
++    });
+   }
+ 
+   browserService = new BrowserService(() => mainWindow, {
+diff --git a/src/main/ipc/registerIpc.ts b/src/main/ipc/registerIpc.ts
+--- a/src/main/ipc/registerIpc.ts
++++ b/src/main/ipc/registerIpc.ts
+@@ -122,6 +122,7 @@
+   };
+ 
+   ipcMain.handle(IPC.clipboardRead, () => clipboard.readText());
++  ipcMain.handle(IPC.clipboardHasImage, () => !clipboard.readImage().isEmpty());
+   ipcMain.on(IPC.clipboardWrite, (_event, text: string) => {
+     if (typeof text === "string" && text.length > 0) clipboard.writeText(text);
+   });
+diff --git a/src/main/services/CanvasNavigationOverride.ts b/src/main/services/CanvasNavigationOverride.ts
+--- a/src/main/services/CanvasNavigationOverride.ts
++++ b/src/main/services/CanvasNavigationOverride.ts
+@@ -43,6 +43,7 @@
+ 
+ export interface CanvasNavigationInputAttachmentOptions {
+   preventMouseBindings?: boolean;
++  captureMacEditShortcuts?: boolean;
+ }
+ 
+ export function shouldPreventCanvasNavigationInput(
+@@ -220,7 +221,7 @@
+   attach(contents: WebContents, options: CanvasNavigationInputAttachmentOptions = {}): void {
+     if (this.attachedContents.has(contents)) return;
+     this.attachedContents.add(contents);
+-    contents.on("before-input-event", (event, input) => this.handleInput(contents, event, input));
++    contents.on("before-input-event", (event, input) => this.handleInput(contents, event, input, options));
+     contents.on("before-mouse-event", (event, input) => {
+       const transition = this.handleMouseInput(input);
+       if (options.preventMouseBindings !== false && transition.reserved) event.preventDefault();
+@@ -278,7 +279,12 @@
+     );
+   }
+ 
+-  private handleInput(contents: WebContents, event: Event, input: Input): void {
++  private handleInput(
++    contents: WebContents,
++    event: Event,
++    input: Input,
++    options: CanvasNavigationInputAttachmentOptions
++  ): void {
+     if (input.type !== "keyDown" && input.type !== "keyUp") return;
+     const keyboardInput = {
+       type: input.type,
+@@ -292,8 +298,13 @@
+     const previous = this.state();
+     const wheelTransition = this.wheelTracker.update(keyboardInput);
+     const navigationTransition = this.navigationTracker.update(keyboardInput);
++    const macEditShortcut = options.captureMacEditShortcuts === true
++      && input.type === "keyDown"
++      && input.meta && !input.control && !input.alt && !input.shift
++      && (input.code === "KeyA" || input.code === "KeyC" || input.code === "KeyV");
+     const shouldCaptureMenuShortcuts = this.wheelTracker.shouldCaptureMenuShortcuts
+-      || this.navigationTracker.shouldCaptureMenuShortcuts;
++      || this.navigationTracker.shouldCaptureMenuShortcuts
++      || macEditShortcut;
+     this.setMenuShortcutCapture(contents, shouldCaptureMenuShortcuts);
+     const shouldPrevent = shouldPreventCanvasNavigationInput(input, {
+       active: wheelTransition.active || navigationTransition.active,
+diff --git a/src/main/services/TerminalManager.ts b/src/main/services/TerminalManager.ts
+--- a/src/main/services/TerminalManager.ts
++++ b/src/main/services/TerminalManager.ts
+@@ -1582,6 +1582,7 @@
+   }
+ 
+   private bindProcess(id: string, session: ManagedSession, process: IPty): void {
++    session.agentBrowser?.retainUntilExit?.();
+     process.onData((data) => {
+       const current = this.sessions.get(id);
+       if (!current || current !== session || current.process !== process) return;
+diff --git a/src/main/services/agent-browser/AgentBrowserBridge.ts b/src/main/services/agent-browser/AgentBrowserBridge.ts
+--- a/src/main/services/agent-browser/AgentBrowserBridge.ts
++++ b/src/main/services/agent-browser/AgentBrowserBridge.ts
+@@ -20,6 +20,7 @@
+   connectionId: string;
+   args: string[];
+   environment: Record<string, string>;
++  retainUntilExit?(): void;
+   cleanup(): void;
+ }
+ 
+@@ -101,6 +102,9 @@
+         [AGENT_BROWSER_ENV.provider]: capability.provider,
+         [AGENT_BROWSER_ENV.capabilityToken]: capability.capabilityToken
+       },
++      retainUntilExit: () => {
++        if (!cleaned) this.gateway.holdPendingForTerminal(capability.connectionId);
++      },
+       cleanup: () => {
+         if (cleaned) return;
+         cleaned = true;
+diff --git a/src/main/services/agent-browser/AgentGateway.ts b/src/main/services/agent-browser/AgentGateway.ts
+--- a/src/main/services/agent-browser/AgentGateway.ts
++++ b/src/main/services/agent-browser/AgentGateway.ts
+@@ -285,6 +285,12 @@
+     };
+   }
+ 
++  /** A live PTY may wait in the CLI's resume or trust UI before its first MCP handshake. */
++  holdPendingForTerminal(connectionId: string): void {
++    const lease = this.leases.get(connectionId);
++    if (lease && !lease.used) lease.expiresAt = Infinity;
++  }
++
+   revokeTerminalSession(terminalSessionId: string): void {
+     for (const [connectionId, lease] of this.leases) {
+       if (lease.actor.terminalSessionId !== terminalSessionId) continue;
+diff --git a/src/main/services/terminalLaunch.ts b/src/main/services/terminalLaunch.ts
+--- a/src/main/services/terminalLaunch.ts
++++ b/src/main/services/terminalLaunch.ts
+@@ -1,5 +1,5 @@
+ import { existsSync } from "node:fs";
+-import { win32 } from "node:path";
++import { isAbsolute, join, win32 } from "node:path";
+ import type { ProviderId } from "../../shared/contracts.ts";
+ import { normalizeThreadId } from "../../agent-runtime/runtime-protocol.mjs";
+ import { openCodeYoloEnvironment } from "./openCodeConfig.ts";
+@@ -20,6 +20,7 @@
+   platform?: NodeJS.Platform;
+   environment?: Readonly<NodeJS.ProcessEnv>;
+   fileExists?: (path: string) => boolean;
++  resourcesPath?: string;
+   providerCli?: ProviderCliResolution;
+   resumePrevious?: boolean;
+   resumeThreadId?: string;
+@@ -58,6 +59,7 @@
+     : undefined;
+   const auto = profile === "auto";
+   const providerArgs = [
++    ...(provider === "codex" && agentBrowserArgs.includes("-c") ? ["--no-daemon"] : []),
+     ...(profile === "yolo" && provider !== "opencode" ? DANGEROUS_ARGUMENTS[provider] : []),
+     ...(auto ? autoModeArguments(provider, options.thirdPartyModel === true) : []),
+     // Claude Code keeps only the last inline --settings: a plugin's (after the hooks') would silently drop the hooks.
+@@ -71,6 +73,27 @@
+     ...providerCli.environment,
+     ...launchEnvironment
+   };
++  const resourcesPath = options.resourcesPath ?? process.resourcesPath;
++  const bundledDirectory = provider === "codex" && platform === "darwin" && resourcesPath
++    ? join(resourcesPath, "codex-native-tui") : undefined;
++  const bundledFrontend = bundledDirectory ? join(bundledDirectory, "canvastty-codex-tui") : undefined;
++  const bundledLauncher = bundledDirectory ? join(bundledDirectory, "codex-tui-launch.mjs") : undefined;
++  const qaFrontend = environment.CANVASTTY_CODEX_TUI_QA;
++  const frontend = qaFrontend || (bundledFrontend && bundledLauncher
++    && (fileExists(bundledFrontend) || fileExists(bundledLauncher)) ? bundledFrontend : undefined);
++  if (provider === "codex" && frontend) {
++    const launcher = qaFrontend ? environment.CANVASTTY_CODEX_TUI_LAUNCHER_QA : bundledLauncher;
++    if (platform !== "darwin" || providerCli.launcher !== "native"
++      || !isAbsolute(frontend) || !fileExists(frontend)
++      || !launcher || !isAbsolute(launcher) || !fileExists(launcher)) {
++      throw new Error("Codex native TUI requires existing absolute frontend and launcher paths on macOS.");
++    }
++    return {
++      command: process.execPath,
++      args: [launcher, "--backend", providerCli.executable, "--frontend", frontend, "--", ...providerArgs],
++      environment: { ...combinedEnvironment, ELECTRON_RUN_AS_NODE: "1" }
++    };
++  }
+   if (providerCli.launcher === "native") {
+     return {
+       command: providerCli.executable,
+diff --git a/src/preload/index.ts b/src/preload/index.ts
+--- a/src/preload/index.ts
++++ b/src/preload/index.ts
+@@ -67,6 +67,7 @@
+   appVersion: () => ipcRenderer.invoke(IPC.appVersion),
+   clipboard: {
+     readText: () => ipcRenderer.invoke(IPC.clipboardRead),
++    hasImage: () => ipcRenderer.invoke(IPC.clipboardHasImage),
+     writeText: (text: string) => ipcRenderer.send(IPC.clipboardWrite, text)
+   },
+   external: {
+diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
+--- a/src/renderer/src/App.tsx
++++ b/src/renderer/src/App.tsx
+@@ -66,10 +66,12 @@
+   upsertSnapshot
+ } from "./lib/sessionReconciliation";
+ import {
++  handleMacNativeSelectAll,
+   isRenameInputTarget,
+   isShortcutCaptureTarget,
+   matchesPointerShortcut,
+-  matchesShortcut
++  matchesShortcut,
++  shouldKeepNativeKeyboardInput
+ } from "./lib/shortcuts";
+ import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./features/home/homeLayout";
+ import { boundsInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
+@@ -1125,6 +1127,8 @@
+       setRenamingSessionId(activeSessionId);
+     };
+     const handleShortcut = (event: KeyboardEvent): void => {
++      if (handleMacNativeSelectAll(event, window.canvasTTY.window.isMacOS)) return;
++      if (shouldKeepNativeKeyboardInput(event.target, window.canvasTTY.window.isMacOS)) return;
+       if (event.repeat || isShortcutCaptureTarget(event.target) || isRenameInputTarget(event.target)) return;
+       if (matchesShortcut(event, settings.shortcuts.toggleFullscreen)) {
+         event.preventDefault();
+diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/src/features/terminal/TerminalCard.tsx
+--- a/src/renderer/src/features/terminal/TerminalCard.tsx
++++ b/src/renderer/src/features/terminal/TerminalCard.tsx
+@@ -28,12 +28,15 @@
+ import { sessionStatusLabel } from "../../lib/sessionStatus";
+ import { attachTerminalMouseCoordinateAdapter, attachTerminalScrollbarCoordinateAdapter } from "./terminalMouseCoordinates";
+ import {
++  CODEX_SELECT_ALL_SEQUENCE,
+   SHIFT_ENTER_SEQUENCE,
++  isMacTerminalClipboardShortcut,
+   shouldCopyTerminalSelection,
+   shouldPasteTerminalClipboard,
+   shouldRestartExitedTerminal,
+   shouldScrollTerminalPage,
+   shouldSearchTerminalOutput,
++  shouldSelectCodexDraft,
+   shouldSendTerminalLineBreak
+ } from "./terminalShortcuts";
+ import { attachTerminalRedrawViewport, fitTerminalPreservingViewport } from "./terminalViewport";
+@@ -174,6 +177,8 @@
+   const suppressFocusReport = useRef(false);
+   const sessionExited = useRef(session.exitCode !== null);
+   sessionExited.current = session.exitCode !== null;
++  const sessionStartedAt = useRef(session.startedAt);
++  sessionStartedAt.current = session.startedAt;
+   const restartAction = useRef<(resume?: boolean) => Promise<void>>(async () => undefined);
+   const invertTerminalWheelRef = useRef(invertTerminalWheel);
+   invertTerminalWheelRef.current = invertTerminalWheel;
+@@ -332,6 +337,15 @@
+     };
+     fitRef.current = fit;
+     terminal.attachCustomKeyEventHandler((event) => {
++      const selectCodexDraft = shouldSelectCodexDraft(event, window.canvasTTY.window.isMacOS, session.provider);
++      if (window.canvasTTY.window.isMacOS && !isMacTerminalClipboardShortcut(event) && !selectCodexDraft) return true;
++      if (selectCodexDraft) {
++        event.preventDefault();
++        event.stopPropagation();
++        terminal.clearSelection();
++        window.canvasTTY.terminal.input(session.id, CODEX_SELECT_ALL_SEQUENCE);
++        return false;
++      }
+       if ((event.key === "F4" || event.code === "F4")
+         && !event.ctrlKey && !event.shiftKey && !event.metaKey && !event.altKey
+         && terminalHost.current?.closest(".terminal-card")?.getAttribute("data-pixel-skin") === "true") {
+@@ -370,19 +384,30 @@
+         terminal.scrollPages(pageDirection);
+         return false;
+       }
+-      if (shouldCopyTerminalSelection(event, terminal.hasSelection())) {
++      if (shouldCopyTerminalSelection(event, terminal.hasSelection() || window.canvasTTY.window.isMacOS)) {
+         event.preventDefault();
+         event.stopPropagation();
+-        window.canvasTTY.clipboard.writeText(terminal.getSelection());
++        if (terminal.hasSelection()) window.canvasTTY.clipboard.writeText(terminal.getSelection());
++        else if (session.provider === "codex") window.canvasTTY.terminal.input(session.id, "\u001b[99;9u");
+         return false;
+       }
+       if (!shouldPasteTerminalClipboard(event)) return true;
+ 
+       event.preventDefault();
+       event.stopPropagation();
+-      void window.canvasTTY.clipboard.readText()
+-        .then((text) => {
+-          if (text && terminalRef.current === terminal) terminal.paste(text);
++      const pasteStartedAt = sessionStartedAt.current;
++      const acceptsPaste = () => terminalRef.current === terminal && !sessionExited.current
++        && sessionStartedAt.current === pasteStartedAt;
++      if (!acceptsPaste()) return false;
++      void (event.metaKey ? window.canvasTTY.clipboard.hasImage() : Promise.resolve(false))
++        .then(async (hasImage) => {
++          if (!acceptsPaste()) return;
++          if (hasImage) {
++            window.canvasTTY.terminal.input(session.id, "\u0016");
++            return;
++          }
++          const text = await window.canvasTTY.clipboard.readText();
++          if (text && acceptsPaste()) terminal.paste(text);
+         })
+         .catch(() => undefined);
+       return false;
+@@ -815,7 +840,7 @@
+       onKeyDown={(event) => {
+         // Fallback for focus parked on the card itself; the terminal textarea is
+         // handled by attachCustomKeyEventHandler, which stops propagation first.
+-        if (summaryMode || !shouldSearchTerminalOutput(event)) return;
++        if (window.canvasTTY.window.isMacOS || summaryMode || !shouldSearchTerminalOutput(event)) return;
+         event.preventDefault();
+         event.stopPropagation();
+         toggleSearch();
+diff --git a/src/renderer/src/features/terminal/terminalShortcuts.ts b/src/renderer/src/features/terminal/terminalShortcuts.ts
+--- a/src/renderer/src/features/terminal/terminalShortcuts.ts
++++ b/src/renderer/src/features/terminal/terminalShortcuts.ts
+@@ -12,6 +12,20 @@
+ }
+ 
+ export const SHIFT_ENTER_SEQUENCE = "\u001b[13;2u";
++export const CODEX_SELECT_ALL_SEQUENCE = "\u001b[97;9u";
++
++export function shouldSelectCodexDraft(event: TerminalKeyEvent, isMacOS: boolean, provider: string): boolean {
++  return isMacOS && provider === "codex"
++    && event.type === "keydown"
++    && event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
++    && matchesPhysicalOrLayoutKey(event, "KeyA", "a");
++}
++
++export function isMacTerminalClipboardShortcut(event: TerminalKeyEvent): boolean {
++  return event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
++    && (matchesPhysicalOrLayoutKey(event, "KeyC", "c")
++      || matchesPhysicalOrLayoutKey(event, "KeyV", "v"));
++}
+ 
+ export function shouldTogglePixelSkinMasterView(
+   event: TerminalKeyEvent,
+diff --git a/src/renderer/src/features/workspace/WorkspaceCanvas.tsx b/src/renderer/src/features/workspace/WorkspaceCanvas.tsx
+--- a/src/renderer/src/features/workspace/WorkspaceCanvas.tsx
++++ b/src/renderer/src/features/workspace/WorkspaceCanvas.tsx
+@@ -23,7 +23,7 @@
+ import { UiIcon } from "../../components/UiIcon";
+ import { ShortcutReference } from "../../components/ShortcutReference";
+ import { t } from "../../lib/i18n";
+-import { displayCanvasNavigationBinding, isRenameInputTarget, isShortcutCaptureTarget, matchesPhysicalOrLayoutKey } from "../../lib/shortcuts";
++import { displayCanvasNavigationBinding, isRenameInputTarget, isShortcutCaptureTarget, matchesPhysicalOrLayoutKey, shouldKeepNativeKeyboardInput } from "../../lib/shortcuts";
+ import { BrowserCard } from "../browser/BrowserCard";
+ import { attentionQueueRenderedAt, attentionSessions } from "../home/attentionQueue";
+ import type { LimitsLoadState } from "../home/homeModel";
+@@ -756,6 +756,7 @@
+       return;
+     }
+     const handleShortcut = (event: KeyboardEvent): void => {
++      if (shouldKeepNativeKeyboardInput(event.target, window.canvasTTY.window.isMacOS)) return;
+       if (activeSessionId !== null
+         && (isPixelSkinThemeId(settings.terminalBorderSkin) || isPixelSkinPackId(settings.terminalBorderSkin))
+         && shouldTogglePixelSkinMasterView(
+diff --git a/src/renderer/src/lib/shortcuts.ts b/src/renderer/src/lib/shortcuts.ts
+--- a/src/renderer/src/lib/shortcuts.ts
++++ b/src/renderer/src/lib/shortcuts.ts
+@@ -61,6 +61,31 @@
+   return target instanceof Element && Boolean(target.closest('[data-terminal-rename="true"]'));
+ }
+ 
++export function shouldKeepNativeKeyboardInput(target: EventTarget | null, isMacOS: boolean): boolean {
++  return isMacOS && target instanceof Element
++    && Boolean(target.closest('.terminal-card__surface, input, textarea, select, [contenteditable="true"]'));
++}
++
++// Terminal Command+A bypasses the Electron menu, so ordinary fields need their DOM selection here.
++export function handleMacNativeSelectAll(event: KeyboardEvent, isMacOS: boolean): boolean {
++  if (!isMacOS || !event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
++    || !matchesPhysicalOrLayoutKey(event, "KeyA", "a") || !(event.target instanceof Element)) return false;
++  if (isShortcutCaptureTarget(event.target) || event.target.closest(".xterm")) return false;
++  const field = event.target.closest("input, textarea");
++  if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) field.select();
++  else {
++    let editable = event.target.closest<HTMLElement>("[contenteditable]");
++    if (!editable?.isContentEditable) return false;
++    while (editable.parentElement?.isContentEditable) editable = editable.parentElement;
++    const selection = editable.ownerDocument.getSelection();
++    if (!selection) return false;
++    selection.selectAllChildren(editable);
++  }
++  event.preventDefault();
++  event.stopPropagation();
++  return true;
++}
++
+ export function displayCanvasNavigationBinding(binding: string, isMacOS: boolean): string {
+   if (!isMacOS) return binding;
+   return binding.split("+").map((part) => {
+diff --git a/src/shared/contracts.ts b/src/shared/contracts.ts
+--- a/src/shared/contracts.ts
++++ b/src/shared/contracts.ts
+@@ -1302,6 +1302,7 @@
+   appVersion(): Promise<string>;
+   clipboard: {
+     readText(): Promise<string>;
++    hasImage(): Promise<boolean>;
+     writeText(text: string): void;
+   };
+   external: {
+@@ -1470,6 +1471,7 @@
+ 
+ export const IPC = {
+   clipboardRead: "clipboard:read",
++  clipboardHasImage: "clipboard:has-image",
+   clipboardWrite: "clipboard:write",
+   externalOpenUrl: "external:open-url",
+   terminalSetVisible: "terminal:set-visible",
+diff --git a/tests/agent-browser-helper.test.mjs b/tests/agent-browser-helper.test.mjs
+--- a/tests/agent-browser-helper.test.mjs
++++ b/tests/agent-browser-helper.test.mjs
+@@ -181,6 +181,7 @@
+ 
+ test("PTY bridge keeps the one-time capability in child env only and honors the kill switch", () => {
+   const revoked = [];
++  const retained = [];
+   const gateway = {
+     isEnabled: true,
+     setEnabled(value) { this.isEnabled = value; },
+@@ -195,7 +196,8 @@
+         authenticated: new Promise(() => {})
+       };
+     },
+-    revokeTerminalSession(id) { revoked.push(id); }
++    revokeTerminalSession(id) { revoked.push(id); },
++    holdPendingForTerminal(id) { retained.push(id); }
+   };
+   const bridge = new AgentBrowserBridge(gateway, {
+     helper: { command: "/usr/bin/node", args: ["/app/mcp-helper.mjs"] },
+@@ -214,7 +216,12 @@
+   assert.equal(launch.environment[AGENT_BROWSER_ENV.provider], "codex");
+   assert.equal(JSON.stringify(launch.args).includes("one-time-secret-token"), false);
+   assert.equal(JSON.stringify(launch.args).includes("terminal-id"), false);
++  assert.deepEqual(retained, []);
++  launch.retainUntilExit();
++  assert.deepEqual(retained, ["connection-id"]);
+   launch.cleanup();
++  launch.retainUntilExit();
++  assert.deepEqual(retained, ["connection-id"]);
+   assert.deepEqual(revoked, ["terminal-id"]);
+ 
+   const openCodeLaunch = bridge.prepareLaunch({
+diff --git a/tests/agent-browser-protocol-gateway.test.mjs b/tests/agent-browser-protocol-gateway.test.mjs
+--- a/tests/agent-browser-protocol-gateway.test.mjs
++++ b/tests/agent-browser-protocol-gateway.test.mjs
+@@ -11,6 +11,7 @@
+   AgentGateway,
+   supportsAgentGatewayPlatform
+ } from "../src/main/services/agent-browser/AgentGateway.ts";
++import { AgentBrowserBridge, AGENT_BROWSER_ENV } from "../src/main/services/agent-browser/AgentBrowserBridge.ts";
+ import {
+   AGENT_BRIDGE_PROTOCOL_VERSION,
+   HEARTBEAT_EXPIRY_MS,
+@@ -423,6 +424,51 @@
+   await assert.rejects(expired.authenticated, /expired/i);
+ });
+ 
++test("a live PTY can authenticate after the default pending TTL and cleanup still revokes it", POSIX_GATEWAY_TEST, async (t) => {
++  let now = 1_000;
++  const gateway = await startedGateway(t, core(), { now: () => now });
++  const root = await fixture(t, "canvastty-live-pty-capability-");
++  const bridge = new AgentBrowserBridge(gateway, {
++    helper: { command: process.execPath, args: ["/app/mcp-helper.mjs"] },
++    providerClis: { get: () => ({ state: "available", executable: process.execPath }) },
++    runtimeDirectory: root,
++    hermesHomeDirectory: join(root, "hermes"),
++    kimiHomeDirectory: join(root, "kimi")
++  });
++  const launch = bridge.prepareLaunch({ terminalSessionId: "live-pty", provider: "codex", cwd: root });
++  t.after(() => launch.cleanup());
++  const capability = {
++    address: launch.environment[AGENT_BROWSER_ENV.address],
++    agentId: launch.agentId,
++    connectionId: launch.connectionId,
++    terminalSessionId: "live-pty",
++    provider: "codex",
++    capabilityToken: launch.environment[AGENT_BROWSER_ENV.capabilityToken]
++  };
++  launch.retainUntilExit();
++  const standalone = gateway.registerAgent({ terminalSessionId: "standalone", provider: "codex", cwd: root });
++  now += 60_001;
++  gateway.expireConnections();
++
++  const retainedClient = await connectClient(capability.address);
++  t.after(() => retainedClient.destroy());
++  retainedClient.send(authMessage(capability));
++  await retainedClient.next((message) => message.type === "authenticated");
++
++  const expiredClient = await connectClient(standalone.address);
++  t.after(() => expiredClient.destroy());
++  expiredClient.send(authMessage(standalone));
++  assert.equal((await expiredClient.next((message) => message.type === "error")).error.code, "AUTH_INVALID");
++  await assert.rejects(standalone.authenticated, /expired/i);
++
++  launch.cleanup();
++  await retainedClient.closed;
++  const revokedClient = await connectClient(capability.address);
++  t.after(() => revokedClient.destroy());
++  revokedClient.send(authMessage(capability));
++  assert.equal((await revokedClient.next((message) => message.type === "error")).error.code, "AUTH_INVALID");
++});
++
+ test("AgentGateway heartbeat uses server time and expires silent authenticated clients", POSIX_GATEWAY_TEST, async (t) => {
+   let now = 10_000;
+   const heartbeats = [];
+diff --git a/tests/app-shortcuts.test.mjs b/tests/app-shortcuts.test.mjs
+--- a/tests/app-shortcuts.test.mjs
++++ b/tests/app-shortcuts.test.mjs
+@@ -1,10 +1,15 @@
+ import assert from "node:assert/strict";
++import { readFile } from "node:fs/promises";
+ import test from "node:test";
+ import {
+   displayCanvasNavigationBinding,
++  handleMacNativeSelectAll,
++  isRenameInputTarget,
++  isShortcutCaptureTarget,
+   matchesPhysicalOrLayoutKey,
+   matchesPointerShortcut,
+   matchesShortcut,
++  shouldKeepNativeKeyboardInput,
+   shortcutFromKeyboardEvent,
+   shortcutFromPointerEvent
+ } from "../src/renderer/src/lib/shortcuts.ts";
+@@ -70,3 +75,132 @@
+   assert.equal(displayCanvasNavigationBinding("Ctrl+Alt+Meta+Space", true), "Ctrl+Option+Command+Space");
+   assert.equal(displayCanvasNavigationBinding("Ctrl+Alt", false), "Ctrl+Alt");
+ });
++
++test("macOS native input keeps CLI keys while canvas and other platforms keep canvas shortcuts", (t) => {
++  const previousElement = globalThis.Element;
++  class ElementTarget extends EventTarget {
++    constructor(nativeInput) {
++      super();
++      this.nativeInput = nativeInput;
++    }
++    closest() { return this.nativeInput ? this : null; }
++  }
++  globalThis.Element = ElementTarget;
++  t.after(() => {
++    if (previousElement === undefined) delete globalThis.Element;
++    else globalThis.Element = previousElement;
++  });
++  const nativeInput = new ElementTarget(true);
++  const canvas = new ElementTarget(false);
++  for (const event of [
++    keyEvent("F2"), keyEvent("Home"), keyEvent("f", { metaKey: true }),
++    keyEvent("ArrowLeft", { altKey: true }), keyEvent("k", { ctrlKey: true })
++  ]) {
++    assert.equal(shouldKeepNativeKeyboardInput(nativeInput, true), true, event.key);
++    assert.equal(shouldKeepNativeKeyboardInput(canvas, true), false, event.key);
++    assert.equal(shouldKeepNativeKeyboardInput(nativeInput, false), false, event.key);
++  }
++  assert.equal(shouldKeepNativeKeyboardInput(null, true), false);
++  assert.equal(shouldKeepNativeKeyboardInput(new EventTarget(), true), false);
++});
++
++test("App restores native Command+A before its native-input guard without intercepting Codex or other keys", async (t) => {
++  const source = await readFile(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
++  const body = source.match(/const handleShortcut = \(event: KeyboardEvent\): void => \{([\s\S]*?)^    \};/m)?.[1];
++  assert.ok(body, "exercise the actual App capture handler");
++  const saved = new Map(["Element", "HTMLInputElement", "HTMLTextAreaElement"].map((name) => [name, globalThis[name]]));
++  class ElementTarget extends EventTarget {
++    constructor({ tag = "DIV", terminal = false, editable = null, capture = false, parent = null } = {}) {
++      super(); Object.assign(this, { tagName: tag, terminal, editable, capture, parent });
++    }
++    get parentElement() { return this.parent; }
++    get isContentEditable() {
++      const state = this.editable?.toLowerCase();
++      if (state === "false") return false;
++      if (state === "true" || state === "" || state === "plaintext-only") return true;
++      return this.parent?.isContentEditable ?? false;
++    }
++    closest(selector) {
++      if (selector === ".xterm") return this.terminal ? this : this.parent?.closest(selector) ?? null;
++      if (selector.includes("data-shortcut-capture")) return this.capture ? this : this.parent?.closest(selector) ?? null;
++      if (selector.includes("data-terminal-rename")) return null;
++      if (selector === "[contenteditable]") return this.editable !== null ? this : this.parent?.closest(selector) ?? null;
++      if (this.tagName === "INPUT" || this.tagName === "TEXTAREA") return this;
++      if (selector !== "input, textarea" && (this.terminal || this.editable === "true")) return this;
++      return this.parent?.closest(selector) ?? null;
++    }
++  }
++  class TextFieldTarget extends ElementTarget {
++    constructor(tag) { super({ tag }); this.value = "фисв"; this.selectionStart = 4; this.selectionEnd = 4; }
++    select() { this.selectionStart = 0; this.selectionEnd = this.value.length; }
++    type(text) { this.value = this.value.slice(0, this.selectionStart) + text + this.value.slice(this.selectionEnd); }
++  }
++  class InputTarget extends TextFieldTarget { constructor() { super("INPUT"); } }
++  class TextareaTarget extends TextFieldTarget { constructor() { super("TEXTAREA"); } }
++  globalThis.Element = ElementTarget;
++  globalThis.HTMLInputElement = InputTarget;
++  globalThis.HTMLTextAreaElement = TextareaTarget;
++  t.after(() => { for (const [name, previous] of saved) { if (previous === undefined) delete globalThis[name]; else globalThis[name] = previous; } });
++  const actions = [];
++  const window = { canvasTTY: { window: { isMacOS: true } } };
++  const settings = { shortcuts: { toggleFullscreen: "Meta+F", home: "Home", renameWindow: "F2" } };
++  const createHandler = new Function("window", "settings", "performShortcut", "handleMacNativeSelectAll", "shouldKeepNativeKeyboardInput", "isShortcutCaptureTarget", "isRenameInputTarget", "matchesShortcut", `return (event) => {${body}}`);
++  const handler = createHandler(window, settings, (action) => actions.push(action), handleMacNativeSelectAll,
++    shouldKeepNativeKeyboardInput, isShortcutCaptureTarget, isRenameInputTarget, matchesShortcut);
++  const event = (target, changes = {}) => {
++    const state = { prevented: false, stopped: false };
++    return { ...keyEvent("ф", { code: "KeyA", metaKey: true }), target, repeat: false, state,
++      preventDefault() { state.prevented = true; }, stopPropagation() { state.stopped = true; }, ...changes };
++  };
++  for (const field of [new InputTarget(), new TextareaTarget()]) {
++    const input = event(field);
++    handler(input);
++    assert.deepEqual(input.state, { prevented: true, stopped: true });
++    field.type("ч");
++    assert.equal(field.value, "ч", "typing after Command+A replaces the entire native field");
++  }
++  const selected = [];
++  const selectionDocument = { getSelection: () => ({ selectAllChildren: (element) => selected.push(element) }) };
++  for (const mode of ["true", "", "plaintext-only", "TRUE"]) {
++    const editable = new ElementTarget({ editable: mode });
++    editable.ownerDocument = selectionDocument;
++    const nested = new ElementTarget({ editable: "true", parent: new ElementTarget({ parent: editable }) });
++    nested.ownerDocument = selectionDocument;
++    handler(event(new ElementTarget({ parent: nested })));
++    assert.equal(selected.at(-1), editable, `${mode} descendants select the entire editor, including nested editable elements`);
++    const blocked = new ElementTarget({ editable: "false", parent: editable });
++    const blockedEvent = event(new ElementTarget({ parent: blocked }));
++    const previousSelections = selected.length;
++    handler(blockedEvent);
++    assert.equal(selected.length, previousSelections, "an explicit false island is not an editable field");
++    assert.deepEqual(blockedEvent.state, { prevented: false, stopped: false });
++    const independent = new ElementTarget({ editable: "plaintext-only", parent: blocked });
++    independent.ownerDocument = selectionDocument;
++    handler(event(new ElementTarget({ parent: independent })));
++    assert.equal(selected.at(-1), independent, "an editor inside a false island selects its own contents");
++  }
++  const terminal = new TextareaTarget();
++  terminal.terminal = true;
++  const native = event(terminal);
++  handler(native);
++  assert.deepEqual(native.state, { prevented: false, stopped: false });
++  assert.equal(terminal.selectionStart, 4, "xterm keeps the command for its native Codex handler");
++  for (const change of [
++    { metaKey: false, ctrlKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true },
++    { code: "KeyC", key: "c" }, { code: "KeyV", key: "v" },
++    { code: "F2", key: "F2", metaKey: false }, { code: "Home", key: "Home", metaKey: false }
++  ]) {
++    const field = new InputTarget();
++    const input = event(field, change);
++    handler(input);
++    assert.deepEqual(input.state, { prevented: false, stopped: false });
++    assert.equal(field.selectionStart, 4);
++  }
++  const captured = new InputTarget(); captured.capture = true;
++  const captureEvent = event(captured); handler(captureEvent);
++  assert.deepEqual(captureEvent.state, { prevented: false, stopped: false }, "shortcut recording still receives Command+A");
++  window.canvasTTY.window.isMacOS = false;
++  const otherPlatform = new InputTarget(); handler(event(otherPlatform));
++  assert.equal(otherPlatform.selectionStart, 4);
++  assert.deepEqual(actions, []);
++});
+diff --git a/tests/auto-profile.test.mjs b/tests/auto-profile.test.mjs
+--- a/tests/auto-profile.test.mjs
++++ b/tests/auto-profile.test.mjs
+@@ -79,7 +79,7 @@
+   for (const provider of ["qwen", "opencode", "kimi", "cursor", "terminal"]) assert.equal(hasAutoMode(provider), false, provider);
+   assert.throws(() => launch("qwen", "auto"), /qwen has no auto mode; use the normal profile/u);
+   // Normal adds no permission flag and no sandbox.
+-  assert.deepEqual(launch("codex", "normal", ["-c", "x=1"]), ["-c", "x=1"]);
++  assert.deepEqual(launch("codex", "normal", ["-c", "x=1"]), ["--no-daemon", "-c", "x=1"]);
+   assert.deepEqual(launch("claude", "normal"), []);
+   assert.deepEqual(launch("codex", "yolo"), ["--dangerously-bypass-approvals-and-sandbox"]);
+ });
+diff --git a/tests/canvas-navigation-override.test.mjs b/tests/canvas-navigation-override.test.mjs
+--- a/tests/canvas-navigation-override.test.mjs
++++ b/tests/canvas-navigation-override.test.mjs
+@@ -230,6 +230,53 @@
+   assert.equal(prevented, false);
+ });
+ 
++test("macOS Select All, Copy and Paste reach the renderer without capturing other Command shortcuts", () => {
++  const contents = new EventEmitter();
++  const ignored = [];
++  contents.isDestroyed = () => false;
++  contents.setIgnoreMenuShortcuts = (active) => ignored.push(active);
++  const controller = new CanvasNavigationInputController({
++    wheelBinding: null,
++    navigationBinding: null
++  }, () => undefined);
++  controller.attach(contents, { captureMacEditShortcuts: true });
++
++  let prevented = false;
++  const event = { preventDefault: () => { prevented = true; } };
++  contents.emit("before-input-event", event, input("keyDown", "c", { code: "KeyC", meta: true }));
++  contents.emit("before-input-event", event, input("keyUp", "c", { code: "KeyC", meta: true }));
++  contents.emit("before-input-event", event, input("keyDown", "v", { code: "KeyV", meta: true }));
++  contents.emit("before-input-event", event, input("keyUp", "v", { code: "KeyV", meta: true }));
++  contents.emit("before-input-event", event, input("keyDown", "ф", { code: "KeyA", meta: true }));
++  contents.emit("before-input-event", event, input("keyUp", "ф", { code: "KeyA", meta: true }));
++  contents.emit("before-input-event", event, input("keyDown", "q", { code: "KeyQ", meta: true }));
++
++  assert.equal(prevented, false);
++  assert.deepEqual(ignored, [true, false, true, false, true, false]);
++});
++
++test("modified Command+A and non-macOS menu input keep their existing dispatch", () => {
++  for (const captureMacEditShortcuts of [true, false]) {
++    const contents = new EventEmitter();
++    const ignored = [];
++    contents.isDestroyed = () => false;
++    contents.setIgnoreMenuShortcuts = (active) => ignored.push(active);
++    const controller = new CanvasNavigationInputController({ wheelBinding: null, navigationBinding: null }, () => undefined);
++    controller.attach(contents, { captureMacEditShortcuts });
++    const event = { preventDefault: () => assert.fail("editing input must reach its focused native field") };
++    const chords = [
++      { meta: false, control: true }, { meta: true, control: true },
++      { meta: true, alt: true }, { meta: true, shift: true }
++    ];
++    if (!captureMacEditShortcuts) chords.push({ meta: true });
++    for (const modifiers of chords) {
++      contents.emit("before-input-event", event, input("keyDown", "a", { code: "KeyA", ...modifiers }));
++      contents.emit("before-input-event", event, input("keyUp", "a", { code: "KeyA", ...modifiers }));
++    }
++    assert.deepEqual(ignored, []);
++  }
++});
++
+ test("full override remains independent when both bindings are held", () => {
+   const contents = new EventEmitter();
+   contents.isDestroyed = () => false;
+diff --git a/tests/orchestration-launch-role.test.mjs b/tests/orchestration-launch-role.test.mjs
+--- a/tests/orchestration-launch-role.test.mjs
++++ b/tests/orchestration-launch-role.test.mjs
+@@ -84,3 +84,60 @@
+   assert.ok(capability.capabilityToken);
+   gateway.revokeTerminalSession(orchestrator.id);
+ });
++
++test("browser capabilities are retained only after PTY spawn and released on exit", (t) => {
++  const events = [];
++  const calls = [];
++  const spawn = fakeSpawner(calls);
++  let failSpawn = false;
++  const agentBrowser = {
++    prepareLaunch() {
++      return {
++        agentId: "agent",
++        connectionId: "conn",
++        args: [],
++        environment: {},
++        retainUntilExit() { events.push("retain"); },
++        cleanup() { events.push("cleanup"); }
++      };
++    }
++  };
++  const terminals = new TerminalManager(
++    () => undefined,
++    availableRegistry(),
++    agentBrowser,
++    undefined,
++    true,
++    (command, args, options) => {
++      events.push("spawn");
++      if (failSpawn) throw new Error("PTY spawn failed");
++      return spawn(command, args, options);
++    }
++  );
++  t.after(() => terminals.disposeAll());
++  const request = {
++    provider: "codex",
++    cwd: process.cwd(),
++    profile: "normal",
++    position: { x: 0, y: 0 }
++  };
++
++  const session = terminals.create(request);
++  assert.deepEqual(events, ["spawn", "retain"]);
++  calls[0].process.emitExit(0);
++  assert.deepEqual(events, ["spawn", "retain", "cleanup"]);
++
++  terminals.restart(session.id);
++  assert.deepEqual(events, ["spawn", "retain", "cleanup", "spawn", "retain"]);
++  calls[1].process.emitExit(0);
++  assert.deepEqual(events, ["spawn", "retain", "cleanup", "spawn", "retain", "cleanup"]);
++
++  failSpawn = true;
++  assert.throws(() => terminals.create(request), /PTY spawn failed/);
++  assert.equal(calls.length, 2);
++  assert.deepEqual(events, [
++    "spawn", "retain", "cleanup",
++    "spawn", "retain", "cleanup",
++    "spawn", "cleanup"
++  ]);
++});
+diff --git a/tests/terminal-launch.test.mjs b/tests/terminal-launch.test.mjs
+--- a/tests/terminal-launch.test.mjs
++++ b/tests/terminal-launch.test.mjs
+@@ -14,6 +14,65 @@
+   };
+ }
+ 
++test("Codex QA changes only the interactive launch and keeps the registry backend", () => {
++  const environment = {
++    CANVASTTY_CODEX_TUI_QA: "/qa/codex-tui",
++    CANVASTTY_CODEX_TUI_LAUNCHER_QA: "/qa/launch.mjs"
++  };
++  const providerCli = available("codex", "/official/codex");
++  const overrides = ["-c", "hooks.Stop=[]"];
++  assert.deepEqual(resolveTerminalLaunch("codex", "auto", overrides, {
++    platform: "darwin", environment, providerCli, fileExists: () => true, resumePrevious: true
++  }), {
++    command: process.execPath,
++    args: ["/qa/launch.mjs", "--backend", "/official/codex", "--frontend", "/qa/codex-tui", "--",
++      "--no-daemon", "--approve-for-me", ...overrides, "resume"],
++    environment: { PATH: "/resolved/bin:/usr/bin", ELECTRON_RUN_AS_NODE: "1" }
++  });
++  assert.equal(providerCli.executable, "/official/codex");
++  assert.equal(resolveTerminalLaunch("claude", "normal", [], {
++    platform: "darwin", environment, providerCli: available("claude", "/official/claude")
++  }).command, "/official/claude");
++});
++
++test("Codex QA refuses invalid paths rather than silently using another launch", () => {
++  for (const environment of [
++    { CANVASTTY_CODEX_TUI_QA: "relative" },
++    { CANVASTTY_CODEX_TUI_QA: "/qa/codex-tui" },
++    { CANVASTTY_CODEX_TUI_QA: "/qa/codex-tui", CANVASTTY_CODEX_TUI_LAUNCHER_QA: "relative" }
++  ]) {
++    assert.throws(() => resolveTerminalLaunch("codex", "normal", [], {
++      platform: "darwin", environment, providerCli: available("codex", "/official/codex"), fileExists: () => true
++    }), /existing absolute frontend and launcher paths/);
++  }
++});
++
++test("packaged macOS Codex uses its bundled TUI and preserves the official backend", () => {
++  const resourcesPath = "/moved app/Contents/Resources";
++  const frontend = `${resourcesPath}/codex-native-tui/canvastty-codex-tui`;
++  const launcher = `${resourcesPath}/codex-native-tui/codex-tui-launch.mjs`;
++  const options = { platform: "darwin", environment: {}, resourcesPath,
++    providerCli: available("codex", "/official/codex"), fileExists: (path) => [frontend, launcher].includes(path) };
++  assert.deepEqual(resolveTerminalLaunch("codex", "normal", [], options), {
++    command: process.execPath,
++    args: [launcher, "--backend", "/official/codex", "--frontend", frontend, "--"],
++    environment: { PATH: "/resolved/bin:/usr/bin", ELECTRON_RUN_AS_NODE: "1" }
++  });
++  assert.equal(resolveTerminalLaunch("codex", "normal", [], { ...options, platform: "linux" }).command, "/official/codex");
++  assert.equal(resolveTerminalLaunch("codex", "normal", [], { ...options, fileExists: () => false }).command, "/official/codex");
++  assert.equal(resolveTerminalLaunch("claude", "normal", [], { ...options,
++    providerCli: available("claude", "/official/claude") }).command, "/official/claude");
++});
++
++test("a partial packaged TUI fails explicitly instead of reverting to the stock editor", () => {
++  for (const asset of ["canvastty-codex-tui", "codex-tui-launch.mjs"]) {
++    assert.throws(() => resolveTerminalLaunch("codex", "normal", [], {
++      platform: "darwin", environment: {}, resourcesPath: "/app/Contents/Resources",
++      providerCli: available("codex", "/official/codex"), fileExists: (path) => path.endsWith(`/${asset}`)
++    }), /existing absolute frontend and launcher paths/);
++  }
++});
++
+ test("Windows terminal selects built-in PowerShell", () => {
+   const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+   const launch = resolveTerminalLaunch("terminal", "normal", [], {
+@@ -52,6 +111,23 @@
+   const providerCli = available("qwen", "/resolved/qwen");
+   const launch = resolveTerminalLaunch("qwen", "yolo", ["--mcp-config", "{}"], { providerCli });
+   assert.deepEqual(launch.args, ["--yolo", "--mcp-config", "{}"]);
++});
++
++test("Codex uses embedded mode only for scoped config and keeps native resume arguments", () => {
++  const providerCli = available("codex", "/resolved/codex");
++  const scopedConfig = ["-c", "hooks.Stop=[]"];
++  const threadId = "12345678-1234-4234-8234-123456789abc";
++  assert.deepEqual(resolveTerminalLaunch("codex", "normal", [], { providerCli }).args, []);
++  assert.deepEqual(
++    resolveTerminalLaunch("codex", "normal", scopedConfig, { providerCli, resumePrevious: true }).args,
++    ["--no-daemon", ...scopedConfig, "resume"]
++  );
++  assert.deepEqual(
++    resolveTerminalLaunch("codex", "normal", scopedConfig, {
++      providerCli, resumePrevious: true, resumeThreadId: threadId
++    }).args,
++    ["--no-daemon", ...scopedConfig, "resume", threadId]
++  );
+ });
+ 
+ test("Claude keeps launch-scoped adapter arguments in their supplied order", () => {
+diff --git a/tests/terminal-lifecycle.test.mjs b/tests/terminal-lifecycle.test.mjs
+--- a/tests/terminal-lifecycle.test.mjs
++++ b/tests/terminal-lifecycle.test.mjs
+@@ -1,6 +1,7 @@
+ import assert from "node:assert/strict";
+ import { readFile } from "node:fs/promises";
+ import test from "node:test";
++import * as terminalShortcuts from "../src/renderer/src/features/terminal/terminalShortcuts.ts";
+ 
+ const terminalCardPath = new URL(
+   "../src/renderer/src/features/terminal/TerminalCard.tsx",
+@@ -10,6 +11,136 @@
+ const terminalManagerPath = new URL("../src/main/services/TerminalManager.ts", import.meta.url);
+ const contractsPath = new URL("../src/shared/contracts.ts", import.meta.url);
+ 
++test("Command+A dispatches native Codex selection and leaves other providers and CLI keys alone", async () => {
++  const source = await readFile(terminalCardPath, "utf8");
++  const body = source.match(/terminal\.attachCustomKeyEventHandler\(\(event\) => \{([\s\S]*?)^    \}\);/m)?.[1];
++  assert.ok(body, "the terminal's actual keyboard handler must be located");
++  const calls = [];
++  const terminal = { clearSelection: () => calls.push("clear") };
++  const window = { canvasTTY: {
++    window: { isMacOS: true },
++    terminal: { input: (id, sequence) => calls.push([id, sequence]) }
++  } };
++  const createHandler = new Function("window", "session", "terminal", ...Object.keys(terminalShortcuts),
++    `return (event) => {${body}}`);
++  const event = {
++    type: "keydown", key: "ф", code: "KeyA", metaKey: true,
++    ctrlKey: false, shiftKey: false, altKey: false,
++    preventDefault: () => calls.push("prevent"),
++    stopPropagation: () => calls.push("stop")
++  };
++  const codex = createHandler(window, { id: "codex-qa", provider: "codex" }, terminal, ...Object.values(terminalShortcuts));
++  assert.equal(codex(event), false);
++  assert.deepEqual(calls, ["prevent", "stop", "clear", ["codex-qa", "\u001b[97;9u"]]);
++  calls.length = 0;
++  for (const provider of ["terminal", "claude", "gemini"]) {
++    const handler = createHandler(window, { id: provider, provider }, terminal, ...Object.values(terminalShortcuts));
++    assert.equal(handler(event), true);
++  }
++  for (const change of [
++    { type: "keyup" }, { ctrlKey: true }, { shiftKey: true }, { altKey: true },
++    { key: "F2", code: "F2", metaKey: false },
++    { key: "Home", code: "Home", metaKey: false }
++  ]) assert.equal(codex({ ...event, ...change }), true);
++  assert.deepEqual(calls, []);
++});
++
++test("clipboard replies cannot paste into a restarted or exited session while normal text and image paste stay intact", async () => {
++  const source = await readFile(terminalCardPath, "utf8");
++  const body = source.match(/terminal\.attachCustomKeyEventHandler\(\(event\) => \{([\s\S]*?)^    \}\);/m)?.[1];
++  assert.ok(body, "exercise the terminal's actual keyboard handler");
++  const createHandler = new Function("window", "session", "terminal", "terminalRef", "sessionExited", "sessionStartedAt", ...Object.keys(terminalShortcuts),
++    `return (event) => {${body}}`);
++  const event = {
++    type: "keydown", key: "м", code: "KeyV", metaKey: true,
++    ctrlKey: false, shiftKey: false, altKey: false,
++    preventDefault() {}, stopPropagation() {}
++  };
++  const tick = () => new Promise((resolve) => setImmediate(resolve));
++  const deferred = () => {
++    let resolve;
++    const promise = new Promise((done) => { resolve = done; });
++    return { promise, resolve };
++  };
++  const fixture = () => {
++    const image = deferred();
++    const text = deferred();
++    const calls = [];
++    const reads = { image: 0, text: 0 };
++    const terminal = { hasSelection: () => false, paste: (value) => calls.push(["text", value]) };
++    const terminalRef = { current: terminal };
++    const sessionExited = { current: false };
++    const sessionStartedAt = { current: 1 };
++    const window = { canvasTTY: {
++      window: { isMacOS: true },
++      clipboard: {
++        hasImage: () => { reads.image++; return image.promise; },
++        readText: () => { reads.text++; return text.promise; }
++      },
++      terminal: { input: (id, sequence) => calls.push([id, sequence]) }
++    } };
++    const handler = createHandler(window, { id: "same-card", provider: "codex" }, terminal,
++      terminalRef, sessionExited, sessionStartedAt, ...Object.values(terminalShortcuts));
++    return { handler, image, text, calls, reads, terminalRef, sessionExited, sessionStartedAt };
++  };
++  const normalText = fixture();
++  assert.equal(normalText.handler(event), false);
++  normalText.image.resolve(false);
++  await tick();
++  normalText.text.resolve("ordinary clipboard text");
++  await tick();
++  assert.deepEqual(normalText.calls, [["text", "ordinary clipboard text"]]);
++  const normalImage = fixture();
++  assert.equal(normalImage.handler(event), false);
++  normalImage.image.resolve(true);
++  await tick();
++  assert.deepEqual(normalImage.calls, [["same-card", "\u0016"]]);
++  assert.equal(normalImage.reads.text, 0);
++
++  for (const imageValue of [false, true]) {
++    const restarted = fixture();
++    restarted.handler(event);
++    restarted.sessionExited.current = true;
++    restarted.sessionStartedAt.current = 2;
++    restarted.sessionExited.current = false;
++    restarted.image.resolve(imageValue);
++    await tick();
++    assert.deepEqual(restarted.calls, [], "first clipboard reply must not reach a later launch");
++    assert.equal(restarted.reads.text, 0);
++  }
++  const restartedDuringText = fixture();
++  restartedDuringText.handler(event);
++  restartedDuringText.image.resolve(false);
++  await tick();
++  assert.equal(restartedDuringText.reads.text, 1);
++  restartedDuringText.sessionExited.current = true;
++  restartedDuringText.sessionStartedAt.current = 2;
++  restartedDuringText.sessionExited.current = false;
++  restartedDuringText.text.resolve("stale clipboard text");
++  await tick();
++  assert.deepEqual(restartedDuringText.calls, [], "second clipboard reply must not reach a later launch");
++
++  for (const invalidate of [(run) => { run.sessionExited.current = true; }, (run) => { run.terminalRef.current = null; }]) {
++    const run = fixture();
++    run.handler(event);
++    invalidate(run);
++    run.image.resolve(true);
++    await tick();
++    assert.deepEqual(run.calls, [], "an exited or unmounted session rejects pending paste");
++  }
++  const alreadyExited = fixture();
++  alreadyExited.sessionExited.current = true;
++  assert.equal(alreadyExited.handler(event), false);
++  assert.equal(alreadyExited.reads.image, 0);
++  const nativeKeys = fixture();
++  for (const change of [
++    { metaKey: false, ctrlKey: true }, { altKey: true }, { shiftKey: true },
++    { metaKey: false, key: "F2", code: "F2" }, { metaKey: false, key: "Home", code: "Home" }
++  ]) assert.equal(nativeKeys.handler({ ...event, ...change }), true);
++  assert.deepEqual(nativeKeys.reads, { image: 0, text: 0 });
++  assert.deepEqual(nativeKeys.calls, []);
++});
++
+ test("palette changes retheme the live xterm without recreating it", async () => {
+   const source = await readFile(terminalCardPath, "utf8");
+   const mountDependencies = effectDependenciesContaining(source, "new Terminal({");
+@@ -27,11 +158,19 @@
+   assert.match(source, /return false;/);
+ });
+ 
++test("Command copy reaches a CLI-owned selection without sending Control-C", async () => {
++  const source = await readFile(terminalCardPath, "utf8");
++  assert.match(source, /shouldCopyTerminalSelection\(event, terminal\.hasSelection\(\) \|\| window\.canvasTTY\.window\.isMacOS\)/);
++  assert.match(source, /if \(terminal\.hasSelection\(\)\)[\s\S]*?writeText\(terminal\.getSelection\(\)\)[\s\S]*?else if \(session\.provider === "codex"\) window\.canvasTTY\.terminal\.input\(session\.id, "\\u001b\[99;9u"\)/);
++});
++
+ test("terminal paste reads the trusted clipboard bridge and uses xterm paste semantics", async () => {
+   const source = await readFile(terminalCardPath, "utf8");
+ 
+   assert.match(source, /window\.canvasTTY\.clipboard\.readText\(\)/);
+   assert.match(source, /terminal\.paste\(text\)/);
++  assert.match(source, /window\.canvasTTY\.clipboard\.hasImage\(\)/);
++  assert.match(source, /window\.canvasTTY\.terminal\.input\(session\.id, "\\u0016"\)/);
+ });
+ 
+ test("terminal mouse coordinates are adapted for a transformed canvas", async () => {
+diff --git a/tests/terminal-shortcuts.test.mjs b/tests/terminal-shortcuts.test.mjs
+--- a/tests/terminal-shortcuts.test.mjs
++++ b/tests/terminal-shortcuts.test.mjs
+@@ -1,12 +1,15 @@
+ import assert from "node:assert/strict";
+ import test from "node:test";
+ import {
++  CODEX_SELECT_ALL_SEQUENCE,
+   SHIFT_ENTER_SEQUENCE,
++  isMacTerminalClipboardShortcut,
+   shouldCopyTerminalSelection,
+   shouldPasteTerminalClipboard,
+   shouldRestartExitedTerminal,
+   shouldScrollTerminalPage,
+   shouldSendTerminalLineBreak,
++  shouldSelectCodexDraft,
+   shouldTogglePixelSkinMasterView
+ } from "../src/renderer/src/features/terminal/terminalShortcuts.ts";
+ 
+@@ -19,6 +22,41 @@
+   metaKey: false,
+   altKey: false
+ };
++
++test("Command+A selects only a macOS Codex draft with the unmodified physical or layout chord", () => {
++  const select = { ...keydown, key: "a", code: "KeyA", metaKey: true };
++  assert.equal(shouldSelectCodexDraft(select, true, "codex"), true);
++  assert.equal(shouldSelectCodexDraft({ ...select, key: "ф" }, true, "codex"), true);
++  assert.equal(shouldSelectCodexDraft({ ...select, code: "", repeat: true }, true, "codex"), true);
++  assert.equal(CODEX_SELECT_ALL_SEQUENCE, "\u001b[97;9u");
++  assert.equal(shouldSelectCodexDraft(select, false, "codex"), false);
++  for (const provider of ["terminal", "claude", "gemini", "grok"]) {
++    assert.equal(shouldSelectCodexDraft(select, true, provider), false);
++  }
++  for (const event of [
++    { ...select, metaKey: false, ctrlKey: true },
++    { ...select, ctrlKey: true },
++    { ...select, shiftKey: true },
++    { ...select, altKey: true },
++    { ...select, type: "keyup" },
++    { ...select, key: "c", code: "KeyC" },
++    { ...select, key: "ф", code: "KeyF" }
++  ]) assert.equal(shouldSelectCodexDraft(event, true, "codex"), false);
++});
++
++test("macOS terminal adaptation handles only Command copy and paste", () => {
++  assert.equal(isMacTerminalClipboardShortcut({ ...keydown, metaKey: true }), true);
++  assert.equal(isMacTerminalClipboardShortcut({ ...keydown, key: "м", code: "KeyV", metaKey: true }), true);
++  for (const event of [
++    { ...keydown, ctrlKey: true },
++    { ...keydown, key: "F2", code: "F2" },
++    { ...keydown, key: "F4", code: "F4" },
++    { ...keydown, key: "Home", code: "Home" },
++    { ...keydown, key: "f", code: "KeyF", ctrlKey: true, shiftKey: true },
++    { ...keydown, key: "Enter", code: "Enter", shiftKey: true },
++    { ...keydown, key: "k", code: "KeyK", metaKey: true }
++  ]) assert.equal(isMacTerminalClipboardShortcut(event), false);
++});
+ 
+ test("copies a terminal selection with platform copy shortcuts", () => {
+   assert.equal(shouldCopyTerminalSelection({ ...keydown, ctrlKey: true }, true), true);
