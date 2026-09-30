@@ -20,6 +20,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LocalSettings {
+    pub(crate) canvastty_native_editing: bool,
     pub(crate) tui: Tui,
     pub(crate) transcript_mode: TranscriptMode,
     pub(crate) history: History,
@@ -57,6 +58,7 @@ impl LocalSettings {
             config.animations
         };
         Self {
+            canvastty_native_editing: false,
             transcript_mode: TranscriptMode::resolve(
                 config.tui_fullscreen_transcript,
                 config.tui_alternate_screen != codex_config::types::AltScreenMode::Never,
@@ -123,6 +125,7 @@ impl LocalSettings {
     pub(crate) fn reloaded(&self, config: &Config) -> Self {
         let mut settings = Self::from(config);
         settings.transcript_mode = self.transcript_mode;
+        settings.canvastty_native_editing = self.canvastty_native_editing;
         settings.tui.alternate_screen = self.tui.alternate_screen;
         settings
     }

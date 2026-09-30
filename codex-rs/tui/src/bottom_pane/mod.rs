@@ -334,6 +334,7 @@ pub(crate) struct BottomPaneParams {
 }
 
 impl BottomPane {
+    #[cfg(test)]
     pub fn new(params: BottomPaneParams) -> Self {
         Self::new_with_composer_config(params, ChatComposerConfig::default())
     }

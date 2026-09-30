@@ -16,7 +16,7 @@ use crate::key_hint::KeyBindingListExt;
 impl BottomPane {
     /// Use the effective submit binding for startup confirmation as soon as config is loaded.
     pub(crate) fn is_startup_submit_key(&self, key_event: KeyEvent) -> bool {
-        self.keymap.composer.submit.is_pressed(key_event)
+        self.composer.is_submit_key(key_event)
     }
 
     /// Consume a confirmed startup draft only after its caller has checked submission readiness.

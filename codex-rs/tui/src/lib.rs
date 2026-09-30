@@ -1969,6 +1969,7 @@ async fn run_ratatui_app(
         prompt,
         shared,
         daemon_cli_executable,
+        owned_local_server,
         ..
     } = cli;
     let images = shared.into_inner().images;
@@ -2060,6 +2061,7 @@ async fn run_ratatui_app(
         startup_draft,
         managed_worktree,
         daemon_cli_executable,
+        cfg!(target_os = "macos") && owned_local_server,
     ))
     .await;
 

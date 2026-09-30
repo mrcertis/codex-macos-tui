@@ -57,6 +57,7 @@ where
         submission_pending: false,
         key_chord_matcher: Default::default(),
         key_chords: crate::keymap::RuntimeKeymap::defaults().chords,
+        canvastty_native_editing: false,
     }
 }
 

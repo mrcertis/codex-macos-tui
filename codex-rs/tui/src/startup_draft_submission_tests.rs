@@ -7,6 +7,72 @@ use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn canvastty_native_startup_policy_survives_reload_and_protected_screens() {
+    let mut pump = tests::quiet_startup_test_pump();
+    let mut tui = crate::tui::test_support::make_test_tui().expect("create test terminal");
+    pump.canvastty_native_editing = true;
+    pump.apply_keymap(RuntimeKeymap::defaults());
+    pump.bottom_pane.insert_str("draft");
+    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+        pump.handle_event(
+            &mut tui,
+            TuiEvent::Key(KeyEvent::new(KeyCode::Enter, modifiers)),
+        )
+        .expect("startup Enter inserts a newline before config reload");
+    }
+    assert_eq!(pump.bottom_pane.composer_text(), "draft\n\n");
+    assert!(!pump.take_submission_intent());
+    let home = tempfile::tempdir().expect("create temporary Codex home");
+    let mut config = crate::legacy_core::config::ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .build()
+        .await
+        .expect("build startup configuration");
+    config.tui_keymap =
+        toml::from_str("[composer]\nsubmit = \"f12\"\n[editor]\ninsert_newline = \"ctrl-j\"\n")
+            .expect("parse alternate configured bindings");
+    pump.apply_config(&config);
+    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+        pump.handle_event(
+            &mut tui,
+            TuiEvent::Key(KeyEvent::new(KeyCode::Enter, modifiers)),
+        )
+        .expect("startup Enter still inserts a newline after config reload");
+    }
+    for code in [KeyCode::Tab, KeyCode::F(12)] {
+        pump.handle_event(&mut tui, TuiEvent::Key(KeyEvent::from(code)))
+            .expect("other keys cannot confirm the native startup draft");
+    }
+    assert_eq!(pump.bottom_pane.composer_text(), "draft\n\n\n\n");
+    assert!(!pump.take_submission_intent());
+    let draft = pump.bottom_pane.composer_draft_snapshot();
+    for screen in [
+        StartupDraftInitialScreen::Onboarding,
+        StartupDraftInitialScreen::SessionPicker,
+    ] {
+        pump.initial_screen = screen;
+        for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT, KeyModifiers::SUPER] {
+            pump.handle_event(
+                &mut tui,
+                TuiEvent::Key(KeyEvent::new(KeyCode::Enter, modifiers)),
+            )
+            .expect("protected startup screen retains input ownership");
+        }
+        assert!(!pump.take_submission_intent());
+        assert_eq!(pump.bottom_pane.composer_draft_snapshot(), draft);
+    }
+    pump.initial_screen = StartupDraftInitialScreen::Composer;
+    pump.handle_event(
+        &mut tui,
+        TuiEvent::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER)),
+    )
+    .expect("Command+Enter confirms the retained startup draft");
+    assert!(pump.take_submission_intent());
+    assert!(!pump.take_submission_intent());
+    assert_eq!(pump.bottom_pane.composer_draft_snapshot(), draft);
+}
+
+#[tokio::test]
 async fn startup_enter_confirms_one_visible_draft_and_escape_cancels() {
     let mut pump = tests::quiet_startup_test_pump();
     let mut tui = crate::tui::test_support::make_test_tui().expect("create test terminal");

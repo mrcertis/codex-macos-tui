@@ -86,6 +86,14 @@ impl KeyBinding {
             (KeyModifiers::CONTROL, "ctrl"),
             (KeyModifiers::SHIFT, "shift"),
             (KeyModifiers::ALT, ALT_LABEL),
+            (
+                KeyModifiers::SUPER,
+                if cfg!(target_os = "macos") {
+                    "cmd"
+                } else {
+                    "super"
+                },
+            ),
         ] {
             if self.modifiers.contains(modifier) {
                 label.push_str(name);

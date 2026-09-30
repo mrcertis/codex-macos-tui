@@ -4,7 +4,7 @@
     "src",
     "tests"
   ],
-  "patchSha256": "59047005f5446b0e8eaa91df9ac18e69d00b9b3444e436f289c9329e6fb43038",
+  "patchSha256": "4a7e7cc293b51754805b9dffcb8e895611e40d567ea2aa6f00bf962d8324fe4a",
   "files": [
     {
       "path": "src/main/index.ts",
@@ -39,7 +39,7 @@
     {
       "path": "src/main/services/terminalLaunch.ts",
       "beforeSha256": "b11b16a3e270a495edd72469e79fb0e5cb11b15c5f3e8f91c71b4c66f6a868f8",
-      "afterSha256": "d0c7a964670c6db932e445da962f75a37ae91e7cc5765b534f44deb326cc0594"
+      "afterSha256": "696744daffb3f5b6e949e49ea21942efada22c24d537f402e25f054f35b0a9da"
     },
     {
       "path": "src/preload/index.ts",
@@ -54,12 +54,12 @@
     {
       "path": "src/renderer/src/features/terminal/TerminalCard.tsx",
       "beforeSha256": "6c8bfa894040b62df0bc1368f3bc6285c4261670bad349a3c16ccf450ab6ffd3",
-      "afterSha256": "b1f1441374819045380451fca65f20ca614422545b0e99d7e31f65139c41bec2"
+      "afterSha256": "05d58cc0bdd111d0622a8ec7bc4d2edeea8597169bab4ed466fc700d2c9293fa"
     },
     {
       "path": "src/renderer/src/features/terminal/terminalShortcuts.ts",
       "beforeSha256": "516c9ea0520923e3c27d28139bbbc7577fc2e0306e152d239975fc17c6b4e551",
-      "afterSha256": "1507fbe6f0a46993b1612e90f2e669fe445b6f27dd2586846e84da3a66f868a5"
+      "afterSha256": "175ccffaaec51993d6d957b5a4aa9740e365a882b2215aaa004746d9f6793008"
     },
     {
       "path": "src/renderer/src/features/workspace/WorkspaceCanvas.tsx",
@@ -114,7 +114,7 @@
     {
       "path": "tests/terminal-lifecycle.test.mjs",
       "beforeSha256": "edd0e3ca8981f140a8ecbd16debad98549d4ff676783fc6d4d64e228815fb2f6",
-      "afterSha256": "7dc521be0fa55143b9cb6bde5d908e121ebf48920b15d1f1f5d51ce95c1a7b09"
+      "afterSha256": "fc419f86de511d67c3b00718718481af6121111e16523f0f8ed0cb711a8b22f3"
     },
     {
       "path": "tests/terminal-shortcuts.test.mjs",

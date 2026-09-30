@@ -2,6 +2,38 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn canvastty_native_enter_cancels_confirmed_startup_handoff_without_sending() {
+    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+        let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+        chat.bottom_pane = BottomPane::new_with_composer_config(
+            BottomPaneParams {
+                frame_requester: chat.frame_requester.clone(),
+                app_event_tx: chat.app_event_tx.clone(),
+                has_input_focus: true,
+                enhanced_keys_supported: true,
+                placeholder_text: "draft".into(),
+                disable_paste_burst: false,
+                animations_enabled: false,
+                effects: Default::default(),
+                skills: None,
+            },
+            crate::bottom_pane::ChatComposerConfig {
+                canvastty_native_editing: true,
+                ..Default::default()
+            },
+        );
+        chat.bottom_pane.insert_str("confirmed draft");
+        chat.input_queue.startup_submission = Some(chat.bottom_pane.composer_draft_snapshot());
+        chat.handle_key_event(KeyEvent::new(KeyCode::Enter, modifiers));
+        assert_eq!(chat.bottom_pane.composer_text(), "confirmed draft\n");
+        assert!(chat.input_queue.startup_submission.is_none());
+        chat.thread_id = Some(ThreadId::new());
+        chat.restore_startup_input_when_ready(&mut None, &mut false);
+        assert_no_submit_op(&mut op_rx);
+    }
+}
+
+#[tokio::test]
 async fn startup_submission_waits_for_session_and_sends_exactly_once() {
     let (mut source, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     source.bottom_pane.insert_str("confirmed before startup");

@@ -98,6 +98,7 @@ pub(super) async fn load(
             welcome_motion,
             keymap,
             disable_paste_burst,
+            canvastty_native_editing: cfg!(target_os = "macos") && cli.owned_local_server,
         },
     })
 }

@@ -314,7 +314,7 @@ impl ChatComposer {
                         return (InputResult::None, true);
                     }
                 }
-                if self.is_task_running {
+                if self.is_task_running && !self.config.canvastty_native_editing {
                     return self.handle_submission(/*should_queue*/ true);
                 }
                 (InputResult::None, true)

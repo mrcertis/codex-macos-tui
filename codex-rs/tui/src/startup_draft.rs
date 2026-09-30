@@ -1,5 +1,7 @@
 //! Keep the first composer editable and bottom-anchored while startup work continues.
 //! Submit keys confirm one draft locally; session dispatch waits for the protected handoff.
+//! The owned macOS frontend keeps Enter as editing and confirms only with Command+Enter,
+//! including before configuration loads and after configuration reloads.
 
 use std::future::Future;
 use std::io;
@@ -10,6 +12,8 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crossterm::SynchronizedUpdate;
+use crossterm::event::KeyCode;
+use crossterm::event::KeyModifiers;
 use ratatui::layout::Size;
 use ratatui::style::Stylize;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -60,6 +64,7 @@ pub(crate) struct StartupScreen {
     pub(crate) welcome_motion: crate::motion::MotionMode,
     pub(crate) keymap: RuntimeKeymap,
     pub(crate) disable_paste_burst: bool,
+    pub(crate) canvastty_native_editing: bool,
 }
 
 /// Identifies the first interactive surface expected for the current invocation.
@@ -115,6 +120,7 @@ pub(crate) struct StartupDraftPump {
     submission_pending: bool,
     key_chord_matcher: crate::keymap::KeyChordMatcher,
     key_chords: std::sync::Arc<crate::keymap::RuntimeChordKeymap>,
+    canvastty_native_editing: bool,
 }
 
 impl StartupDraft {
@@ -139,10 +145,10 @@ impl StartupDraft {
         pump.motion = screen.welcome_motion;
         pump.bottom_pane
             .set_status_line_enabled(screen.status_line_enabled);
-        pump.bottom_pane.set_keymap_bindings(&screen.keymap);
+        pump.canvastty_native_editing = screen.canvastty_native_editing;
+        pump.apply_keymap(screen.keymap);
         pump.bottom_pane
             .set_disable_paste_burst(screen.disable_paste_burst);
-        pump.key_chords = screen.keymap.chords;
         let mut draft = Self {
             tui,
             terminal_restore_guard,
@@ -223,6 +229,7 @@ impl StartupDraftPump {
             submission_pending: false,
             key_chord_matcher: Default::default(),
             key_chords: RuntimeKeymap::defaults().chords,
+            canvastty_native_editing: false,
         }
     }
 
@@ -279,10 +286,30 @@ impl StartupDraftPump {
             }) {
                 self.cancel_submission();
             }
-            self.bottom_pane.set_keymap_bindings(&keymap);
-            self.key_chord_matcher.cancel();
-            self.key_chords = keymap.chords;
+            self.apply_keymap(keymap);
         }
+    }
+
+    fn apply_keymap(&mut self, mut keymap: RuntimeKeymap) {
+        if self.canvastty_native_editing {
+            keymap.composer.submit = vec![crate::key_hint::KeyBinding::new(
+                KeyCode::Enter,
+                KeyModifiers::SUPER,
+            )];
+            keymap.composer.queue.clear();
+            let editor = std::sync::Arc::make_mut(&mut keymap.editor);
+            for binding in [
+                crate::key_hint::plain(KeyCode::Enter),
+                crate::key_hint::shift(KeyCode::Enter),
+            ] {
+                if !editor.insert_newline.contains(&binding) {
+                    editor.insert_newline.push(binding);
+                }
+            }
+        }
+        self.bottom_pane.set_keymap_bindings(&keymap);
+        self.key_chord_matcher.cancel();
+        self.key_chords = keymap.chords;
     }
 
     /// Align the loading message and revoke confirmation when startup changes its destination.

@@ -5,6 +5,8 @@
 //! bursts, especially on Windows. Paste timing uses Tokio's clock so asynchronous flush deadlines
 //! and input classification share a clock, including in paused-time tests. Copy shortcuts and right
 //! clicks preserve selected draft text.
+//! CanvasTTY on macOS opts the main draft into Enter/Shift+Enter newlines and Command+Enter
+//! submission. This policy runs before completion popups and preserves embedded editors.
 //! When enabled, fullscreen right-click paste requires an editable composer without a selection,
 //! search, or blocking view. The app reads clipboard text asynchronously and delivers a normal
 //! paste only while the same thread, draft, and cursor remain eligible. Intervening input or focus
@@ -556,6 +558,7 @@ enum PendingPasteHandling {
 /// Shared composer behavior; defaults match the main chat input.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ChatComposerConfig {
+    pub(crate) canvastty_native_editing: bool,
     /// Whether command/file/skill popups are allowed to appear.
     pub(crate) popups_enabled: bool,
     /// Whether `/...` input is parsed and dispatched as slash commands.
@@ -573,6 +576,7 @@ pub(crate) struct ChatComposerConfig {
 impl Default for ChatComposerConfig {
     fn default() -> Self {
         Self {
+            canvastty_native_editing: false,
             popups_enabled: true,
             slash_commands_enabled: true,
             shell_commands_enabled: true,
@@ -590,6 +594,7 @@ impl ChatComposerConfig {
     /// so the composer behaves like a simple notes field.
     pub(crate) const fn plain_text() -> Self {
         Self {
+            canvastty_native_editing: false,
             popups_enabled: false,
             slash_commands_enabled: false,
             shell_commands_enabled: false,
@@ -829,7 +834,11 @@ impl ChatComposer {
             editor_keymap: default_editor_keymap,
             vim_normal_keymap: default_vim_normal_keymap,
         };
-        this.draft.textarea.set_keymap_bindings(&default_keymap);
+        if config.canvastty_native_editing {
+            this.set_keymap_bindings(&default_keymap);
+        } else {
+            this.draft.textarea.set_keymap_bindings(&default_keymap);
+        }
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
         this
@@ -1072,6 +1081,17 @@ impl ChatComposer {
         self.footer.reasoning_up_key =
             keymap.primary_hint(KeymapContext::Chat, "increase_reasoning_effort");
         self.footer.toggle_voice_key = keymap.primary_hint(KeymapContext::Chat, "toggle_voice");
+        if self.config.canvastty_native_editing {
+            self.submit_keys = vec![KeyBinding::new(KeyCode::Enter, KeyModifiers::SUPER)];
+            self.queue_keys.clear();
+            self.footer.queue_key = Some(self.submit_keys[0].into());
+            self.footer.insert_newline_key = Some(key_hint::plain(KeyCode::Enter).into());
+        }
+    }
+
+    /// Startup handoff must use the same effective submit key as the live draft.
+    pub(super) fn is_submit_key(&self, key_event: KeyEvent) -> bool {
+        self.submit_keys.is_pressed(key_event)
     }
 
     /// Return the contexts whose handlers can consume the next composer key.
@@ -1996,6 +2016,38 @@ impl ChatComposer {
 
         if self.history_search.is_some() {
             return self.handle_history_search_key(key_event);
+        }
+
+        if self.config.canvastty_native_editing
+            && self.draft.textarea.vim_query().is_none()
+            && key_event.code == KeyCode::Enter
+            && matches!(
+                key_event.modifiers,
+                KeyModifiers::NONE | KeyModifiers::SHIFT | KeyModifiers::SUPER
+            )
+        {
+            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
+                self.apply_paste(pasted);
+            }
+            self.draft.paste_burst.clear_window_after_non_char();
+            if key_event.modifiers == KeyModifiers::SUPER {
+                let result = if matches!(&self.popups.active, ActivePopup::Command(popup) if popup.selected_item().is_some())
+                {
+                    self.handle_key_event_with_slash_popup(KeyEvent::new(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                    ))
+                } else {
+                    self.handle_submission(self.queue_submissions)
+                };
+                self.reset_vim_mode_after_successful_dispatch(&result.0);
+                self.sync_popups();
+                return result;
+            }
+            if !self.blocks_direct_input {
+                self.insert_str("\n");
+            }
+            return (InputResult::None, true);
         }
 
         if self.handle_vim_history_key(key_event) {
@@ -3177,7 +3229,7 @@ impl ChatComposer {
         should_queue: bool,
         now: Instant,
     ) -> (InputResult, bool) {
-        if !should_queue && self.handle_paste_enter(now) {
+        if !self.config.canvastty_native_editing && !should_queue && self.handle_paste_enter(now) {
             return (InputResult::None, true);
         }
 
@@ -5081,6 +5133,10 @@ mod paste_tests;
 #[cfg(test)]
 #[path = "chat_composer/select_all_tests.rs"]
 mod select_all_tests;
+
+#[cfg(test)]
+#[path = "chat_composer/native_enter_tests.rs"]
+mod native_enter_tests;
 
 #[cfg(test)]
 #[path = "chat_composer/snapshot_tests.rs"]

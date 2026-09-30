@@ -1,4 +1,4 @@
-# macOS draft selection and CanvasTTY
+# macOS draft editing and CanvasTTY
 
 Based on upstream tag `rust-v0.159.2`, commit `ff6aec96948b70d94983af2641a6b67c94faeff5`.
 This branch adds a separate `canvastty-codex-tui` frontend. It connects to the
@@ -12,6 +12,9 @@ unchanged. The launcher rejects other backend versions explicitly.
   Typing, paste and Backspace replace the selection.
 - ⌘C copies the selected draft. Large pasted text is expanded before copying,
   so the clipboard receives the text instead of a `[Pasted Content …]` marker.
+- Enter and Shift+Enter add a newline; only ⌘Enter submits or queues the main
+  draft. The same keys apply during startup. Dialogs and embedded question
+  editors keep their normal Enter behavior.
 - The CanvasTTY patch routes ⌘V text and images to the draft and keeps native
   editable fields working. F2 and Home reach the focused terminal application;
   the existing canvas actions remain available outside terminal/editable focus.
@@ -83,15 +86,26 @@ and change the launcher's version requirement together.
 
 ## Validation
 
+In the owned CanvasTTY frontend on macOS, Enter and Shift+Enter insert a newline
+in the main draft, including the startup draft. Only Command+Enter submits or
+queues it. Tab retains completion without sending a draft. Trust/resume/approval
+dialogs and embedded question editors retain their normal Enter behavior.
+
 ```sh
 node --test macos/codex-tui-launch.test.mjs
 cd codex-rs
-just test -p codex-tui --locked -E 'test(select_all_tests) | test(owned_local_resume) | binary(canvastty-codex-tui)'
+just test -p codex-tui --locked -E 'test(native_enter_tests) | test(canvastty_native) | test(select_all_tests) | test(owned_local_resume) | binary(canvastty-codex-tui)'
 just fmt
 just fix -p codex-tui --locked
 ```
 
-The focused TUI tests passed 21/21; launcher tests passed 14/14. GUI checks in
+The initial selection/launcher TUI checks passed 21/21; launcher tests passed
+14/14. The Enter regression checks cover ordinary and modified Enter, slash
+popups, pending paste bursts, selection replacement, disabled Tab submission,
+startup reload and confirmed-draft handoff. All 28 focused checks passed. The
+expanded set reported 83 passed
+and one existing version-dependent startup-layout snapshot failure (trailing
+padding after the version string). GUI checks in
 CanvasTTY covered UTF-8/emoji, multiline and offscreen selection, large paste
 copy, replacement/deletion, image paste, F2, Home, native search fields and a
 resume picker kept open for 90 seconds. Drafts were not submitted.

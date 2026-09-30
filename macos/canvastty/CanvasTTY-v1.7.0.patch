@@ -1,7 +1,7 @@
 diff --git a/src/main/index.ts b/src/main/index.ts
 --- a/src/main/index.ts
 +++ b/src/main/index.ts
-@@ -209,7 +209,10 @@
+@@ -209,7 +209,10 @@ function createWindow(): { window: BrowserWindow; startupPage: StartupPageLoad }
      const currentUrl = window.webContents.getURL();
      if (currentUrl && url !== currentUrl) event.preventDefault();
    });
@@ -13,7 +13,7 @@ diff --git a/src/main/index.ts b/src/main/index.ts
    // Crash recovery: a dead renderer must never leave the user staring at a
    // blank window. The application surface is reloaded in place — the same entry
    // startup loads — so services, sessions and their scrollback stay untouched
-@@ -378,7 +381,10 @@
+@@ -378,7 +381,10 @@ async function initializeServices(): Promise<void> {
      }
    );
    if (mainWindow && !mainWindow.isDestroyed()) {
@@ -23,14 +23,14 @@ diff --git a/src/main/index.ts b/src/main/index.ts
 +      captureMacEditShortcuts: process.platform === "darwin"
 +    });
    }
- 
+
    browserService = new BrowserService(() => mainWindow, {
 diff --git a/src/main/ipc/registerIpc.ts b/src/main/ipc/registerIpc.ts
 --- a/src/main/ipc/registerIpc.ts
 +++ b/src/main/ipc/registerIpc.ts
-@@ -122,6 +122,7 @@
+@@ -122,6 +122,7 @@ export function registerIpc({
    };
- 
+
    ipcMain.handle(IPC.clipboardRead, () => clipboard.readText());
 +  ipcMain.handle(IPC.clipboardHasImage, () => !clipboard.readImage().isEmpty());
    ipcMain.on(IPC.clipboardWrite, (_event, text: string) => {
@@ -39,15 +39,15 @@ diff --git a/src/main/ipc/registerIpc.ts b/src/main/ipc/registerIpc.ts
 diff --git a/src/main/services/CanvasNavigationOverride.ts b/src/main/services/CanvasNavigationOverride.ts
 --- a/src/main/services/CanvasNavigationOverride.ts
 +++ b/src/main/services/CanvasNavigationOverride.ts
-@@ -43,6 +43,7 @@
- 
+@@ -43,6 +43,7 @@ export interface CanvasNavigationOverrideState {
+
  export interface CanvasNavigationInputAttachmentOptions {
    preventMouseBindings?: boolean;
 +  captureMacEditShortcuts?: boolean;
  }
- 
+
  export function shouldPreventCanvasNavigationInput(
-@@ -220,7 +221,7 @@
+@@ -220,7 +221,7 @@ export class CanvasNavigationInputController {
    attach(contents: WebContents, options: CanvasNavigationInputAttachmentOptions = {}): void {
      if (this.attachedContents.has(contents)) return;
      this.attachedContents.add(contents);
@@ -56,10 +56,10 @@ diff --git a/src/main/services/CanvasNavigationOverride.ts b/src/main/services/C
      contents.on("before-mouse-event", (event, input) => {
        const transition = this.handleMouseInput(input);
        if (options.preventMouseBindings !== false && transition.reserved) event.preventDefault();
-@@ -278,7 +279,12 @@
+@@ -278,7 +279,12 @@ export class CanvasNavigationInputController {
      );
    }
- 
+
 -  private handleInput(contents: WebContents, event: Event, input: Input): void {
 +  private handleInput(
 +    contents: WebContents,
@@ -70,7 +70,7 @@ diff --git a/src/main/services/CanvasNavigationOverride.ts b/src/main/services/C
      if (input.type !== "keyDown" && input.type !== "keyUp") return;
      const keyboardInput = {
        type: input.type,
-@@ -292,8 +298,13 @@
+@@ -292,8 +298,13 @@ export class CanvasNavigationInputController {
      const previous = this.state();
      const wheelTransition = this.wheelTracker.update(keyboardInput);
      const navigationTransition = this.navigationTracker.update(keyboardInput);
@@ -88,9 +88,9 @@ diff --git a/src/main/services/CanvasNavigationOverride.ts b/src/main/services/C
 diff --git a/src/main/services/TerminalManager.ts b/src/main/services/TerminalManager.ts
 --- a/src/main/services/TerminalManager.ts
 +++ b/src/main/services/TerminalManager.ts
-@@ -1582,6 +1582,7 @@
+@@ -1582,6 +1582,7 @@ export class TerminalManager {
    }
- 
+
    private bindProcess(id: string, session: ManagedSession, process: IPty): void {
 +    session.agentBrowser?.retainUntilExit?.();
      process.onData((data) => {
@@ -99,15 +99,15 @@ diff --git a/src/main/services/TerminalManager.ts b/src/main/services/TerminalMa
 diff --git a/src/main/services/agent-browser/AgentBrowserBridge.ts b/src/main/services/agent-browser/AgentBrowserBridge.ts
 --- a/src/main/services/agent-browser/AgentBrowserBridge.ts
 +++ b/src/main/services/agent-browser/AgentBrowserBridge.ts
-@@ -20,6 +20,7 @@
+@@ -20,6 +20,7 @@ export interface PreparedAgentBrowserPtyLaunch {
    connectionId: string;
    args: string[];
    environment: Record<string, string>;
 +  retainUntilExit?(): void;
    cleanup(): void;
  }
- 
-@@ -101,6 +102,9 @@
+
+@@ -101,6 +102,9 @@ export class AgentBrowserBridge implements AgentBrowserLaunchCoordinator {
          [AGENT_BROWSER_ENV.provider]: capability.provider,
          [AGENT_BROWSER_ENV.capabilityToken]: capability.capabilityToken
        },
@@ -120,10 +120,10 @@ diff --git a/src/main/services/agent-browser/AgentBrowserBridge.ts b/src/main/se
 diff --git a/src/main/services/agent-browser/AgentGateway.ts b/src/main/services/agent-browser/AgentGateway.ts
 --- a/src/main/services/agent-browser/AgentGateway.ts
 +++ b/src/main/services/agent-browser/AgentGateway.ts
-@@ -285,6 +285,12 @@
+@@ -285,6 +285,12 @@ export class AgentGateway {
      };
    }
- 
+
 +  /** A live PTY may wait in the CLI's resume or trust UI before its first MCP handshake. */
 +  holdPendingForTerminal(connectionId: string): void {
 +    const lease = this.leases.get(connectionId);
@@ -139,11 +139,11 @@ diff --git a/src/main/services/terminalLaunch.ts b/src/main/services/terminalLau
 @@ -1,5 +1,5 @@
  import { existsSync } from "node:fs";
 -import { win32 } from "node:path";
-+import { isAbsolute, join, win32 } from "node:path";
++import { isAbsolute, posix, win32 } from "node:path";
  import type { ProviderId } from "../../shared/contracts.ts";
  import { normalizeThreadId } from "../../agent-runtime/runtime-protocol.mjs";
  import { openCodeYoloEnvironment } from "./openCodeConfig.ts";
-@@ -20,6 +20,7 @@
+@@ -20,6 +20,7 @@ interface LaunchResolutionOptions {
    platform?: NodeJS.Platform;
    environment?: Readonly<NodeJS.ProcessEnv>;
    fileExists?: (path: string) => boolean;
@@ -151,7 +151,7 @@ diff --git a/src/main/services/terminalLaunch.ts b/src/main/services/terminalLau
    providerCli?: ProviderCliResolution;
    resumePrevious?: boolean;
    resumeThreadId?: string;
-@@ -58,6 +59,7 @@
+@@ -58,6 +59,7 @@ export function resolveTerminalLaunch(
      : undefined;
    const auto = profile === "auto";
    const providerArgs = [
@@ -159,15 +159,15 @@ diff --git a/src/main/services/terminalLaunch.ts b/src/main/services/terminalLau
      ...(profile === "yolo" && provider !== "opencode" ? DANGEROUS_ARGUMENTS[provider] : []),
      ...(auto ? autoModeArguments(provider, options.thirdPartyModel === true) : []),
      // Claude Code keeps only the last inline --settings: a plugin's (after the hooks') would silently drop the hooks.
-@@ -71,6 +73,27 @@
+@@ -71,6 +73,27 @@ export function resolveTerminalLaunch(
      ...providerCli.environment,
      ...launchEnvironment
    };
 +  const resourcesPath = options.resourcesPath ?? process.resourcesPath;
 +  const bundledDirectory = provider === "codex" && platform === "darwin" && resourcesPath
-+    ? join(resourcesPath, "codex-native-tui") : undefined;
-+  const bundledFrontend = bundledDirectory ? join(bundledDirectory, "canvastty-codex-tui") : undefined;
-+  const bundledLauncher = bundledDirectory ? join(bundledDirectory, "codex-tui-launch.mjs") : undefined;
++    ? posix.join(resourcesPath, "codex-native-tui") : undefined;
++  const bundledFrontend = bundledDirectory ? posix.join(bundledDirectory, "canvastty-codex-tui") : undefined;
++  const bundledLauncher = bundledDirectory ? posix.join(bundledDirectory, "codex-tui-launch.mjs") : undefined;
 +  const qaFrontend = environment.CANVASTTY_CODEX_TUI_QA;
 +  const frontend = qaFrontend || (bundledFrontend && bundledLauncher
 +    && (fileExists(bundledFrontend) || fileExists(bundledLauncher)) ? bundledFrontend : undefined);
@@ -190,7 +190,7 @@ diff --git a/src/main/services/terminalLaunch.ts b/src/main/services/terminalLau
 diff --git a/src/preload/index.ts b/src/preload/index.ts
 --- a/src/preload/index.ts
 +++ b/src/preload/index.ts
-@@ -67,6 +67,7 @@
+@@ -67,6 +67,7 @@ const api: CanvasTTYApi = {
    appVersion: () => ipcRenderer.invoke(IPC.appVersion),
    clipboard: {
      readText: () => ipcRenderer.invoke(IPC.clipboardRead),
@@ -201,7 +201,7 @@ diff --git a/src/preload/index.ts b/src/preload/index.ts
 diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
 --- a/src/renderer/src/App.tsx
 +++ b/src/renderer/src/App.tsx
-@@ -66,10 +66,12 @@
+@@ -66,10 +66,12 @@ import {
    upsertSnapshot
  } from "./lib/sessionReconciliation";
  import {
@@ -215,7 +215,7 @@ diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
  } from "./lib/shortcuts";
  import { homeGridPixelSize, homeLayoutFitsGrid, placeHomeWidget } from "./features/home/homeLayout";
  import { boundsInsideRegion, translateBounds } from "./features/workspace/canvasRegions";
-@@ -1125,6 +1127,8 @@
+@@ -1125,6 +1127,8 @@ export function App(): React.JSX.Element {
        setRenamingSessionId(activeSessionId);
      };
      const handleShortcut = (event: KeyboardEvent): void => {
@@ -227,13 +227,14 @@ diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
 diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/src/features/terminal/TerminalCard.tsx
 --- a/src/renderer/src/features/terminal/TerminalCard.tsx
 +++ b/src/renderer/src/features/terminal/TerminalCard.tsx
-@@ -28,12 +28,15 @@
+@@ -28,12 +28,16 @@ import { isCustomTerminalBorderSkinId, terminalBorderSkinFallback } from "../../
  import { sessionStatusLabel } from "../../lib/sessionStatus";
  import { attachTerminalMouseCoordinateAdapter, attachTerminalScrollbarCoordinateAdapter } from "./terminalMouseCoordinates";
  import {
 +  CODEX_SELECT_ALL_SEQUENCE,
    SHIFT_ENTER_SEQUENCE,
 +  isMacTerminalClipboardShortcut,
++  macCodexEnterSequence,
    shouldCopyTerminalSelection,
    shouldPasteTerminalClipboard,
    shouldRestartExitedTerminal,
@@ -243,7 +244,7 @@ diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/
    shouldSendTerminalLineBreak
  } from "./terminalShortcuts";
  import { attachTerminalRedrawViewport, fitTerminalPreservingViewport } from "./terminalViewport";
-@@ -174,6 +177,8 @@
+@@ -174,6 +178,8 @@ function TerminalCardView({
    const suppressFocusReport = useRef(false);
    const sessionExited = useRef(session.exitCode !== null);
    sessionExited.current = session.exitCode !== null;
@@ -252,10 +253,17 @@ diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/
    const restartAction = useRef<(resume?: boolean) => Promise<void>>(async () => undefined);
    const invertTerminalWheelRef = useRef(invertTerminalWheel);
    invertTerminalWheelRef.current = invertTerminalWheel;
-@@ -332,6 +337,15 @@
+@@ -332,6 +338,22 @@ function TerminalCardView({
      };
      fitRef.current = fit;
      terminal.attachCustomKeyEventHandler((event) => {
++      const codexEnter = macCodexEnterSequence(event, window.canvasTTY.window.isMacOS, session.provider);
++      if (codexEnter !== null) {
++        event.preventDefault();
++        event.stopPropagation();
++        window.canvasTTY.terminal.input(session.id, codexEnter);
++        return false;
++      }
 +      const selectCodexDraft = shouldSelectCodexDraft(event, window.canvasTTY.window.isMacOS, session.provider);
 +      if (window.canvasTTY.window.isMacOS && !isMacTerminalClipboardShortcut(event) && !selectCodexDraft) return true;
 +      if (selectCodexDraft) {
@@ -268,7 +276,7 @@ diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/
        if ((event.key === "F4" || event.code === "F4")
          && !event.ctrlKey && !event.shiftKey && !event.metaKey && !event.altKey
          && terminalHost.current?.closest(".terminal-card")?.getAttribute("data-pixel-skin") === "true") {
-@@ -370,19 +384,30 @@
+@@ -370,19 +392,30 @@ function TerminalCardView({
          terminal.scrollPages(pageDirection);
          return false;
        }
@@ -282,7 +290,7 @@ diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/
          return false;
        }
        if (!shouldPasteTerminalClipboard(event)) return true;
- 
+
        event.preventDefault();
        event.stopPropagation();
 -      void window.canvasTTY.clipboard.readText()
@@ -304,7 +312,7 @@ diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/
          })
          .catch(() => undefined);
        return false;
-@@ -815,7 +840,7 @@
+@@ -815,7 +848,7 @@ function TerminalCardView({
        onKeyDown={(event) => {
          // Fallback for focus parked on the card itself; the terminal textarea is
          // handled by attachCustomKeyEventHandler, which stops propagation first.
@@ -316,11 +324,19 @@ diff --git a/src/renderer/src/features/terminal/TerminalCard.tsx b/src/renderer/
 diff --git a/src/renderer/src/features/terminal/terminalShortcuts.ts b/src/renderer/src/features/terminal/terminalShortcuts.ts
 --- a/src/renderer/src/features/terminal/terminalShortcuts.ts
 +++ b/src/renderer/src/features/terminal/terminalShortcuts.ts
-@@ -12,6 +12,20 @@
+@@ -12,6 +12,28 @@ interface TerminalKeyEvent {
  }
- 
+
  export const SHIFT_ENTER_SEQUENCE = "\u001b[13;2u";
 +export const CODEX_SELECT_ALL_SEQUENCE = "\u001b[97;9u";
++
++export function macCodexEnterSequence(event: TerminalKeyEvent, isMacOS: boolean, provider: string): string | null {
++  if (!isMacOS || provider !== "codex" || event.type !== "keydown"
++    || !(event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter")
++    || event.ctrlKey || event.altKey || (event.metaKey && event.shiftKey)) return null;
++  if (event.metaKey) return "\u001b[13;9u";
++  return event.shiftKey ? SHIFT_ENTER_SEQUENCE : "\r";
++}
 +
 +export function shouldSelectCodexDraft(event: TerminalKeyEvent, isMacOS: boolean, provider: string): boolean {
 +  return isMacOS && provider === "codex"
@@ -334,13 +350,13 @@ diff --git a/src/renderer/src/features/terminal/terminalShortcuts.ts b/src/rende
 +    && (matchesPhysicalOrLayoutKey(event, "KeyC", "c")
 +      || matchesPhysicalOrLayoutKey(event, "KeyV", "v"));
 +}
- 
+
  export function shouldTogglePixelSkinMasterView(
    event: TerminalKeyEvent,
 diff --git a/src/renderer/src/features/workspace/WorkspaceCanvas.tsx b/src/renderer/src/features/workspace/WorkspaceCanvas.tsx
 --- a/src/renderer/src/features/workspace/WorkspaceCanvas.tsx
 +++ b/src/renderer/src/features/workspace/WorkspaceCanvas.tsx
-@@ -23,7 +23,7 @@
+@@ -23,7 +23,7 @@ import type {
  import { UiIcon } from "../../components/UiIcon";
  import { ShortcutReference } from "../../components/ShortcutReference";
  import { t } from "../../lib/i18n";
@@ -349,7 +365,7 @@ diff --git a/src/renderer/src/features/workspace/WorkspaceCanvas.tsx b/src/rende
  import { BrowserCard } from "../browser/BrowserCard";
  import { attentionQueueRenderedAt, attentionSessions } from "../home/attentionQueue";
  import type { LimitsLoadState } from "../home/homeModel";
-@@ -756,6 +756,7 @@
+@@ -756,6 +756,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps): React.JSX.Element
        return;
      }
      const handleShortcut = (event: KeyboardEvent): void => {
@@ -360,10 +376,10 @@ diff --git a/src/renderer/src/features/workspace/WorkspaceCanvas.tsx b/src/rende
 diff --git a/src/renderer/src/lib/shortcuts.ts b/src/renderer/src/lib/shortcuts.ts
 --- a/src/renderer/src/lib/shortcuts.ts
 +++ b/src/renderer/src/lib/shortcuts.ts
-@@ -61,6 +61,31 @@
+@@ -61,6 +61,31 @@ export function isRenameInputTarget(target: EventTarget | null): boolean {
    return target instanceof Element && Boolean(target.closest('[data-terminal-rename="true"]'));
  }
- 
+
 +export function shouldKeepNativeKeyboardInput(target: EventTarget | null, isMacOS: boolean): boolean {
 +  return isMacOS && target instanceof Element
 +    && Boolean(target.closest('.terminal-card__surface, input, textarea, select, [contenteditable="true"]'));
@@ -395,7 +411,7 @@ diff --git a/src/renderer/src/lib/shortcuts.ts b/src/renderer/src/lib/shortcuts.
 diff --git a/src/shared/contracts.ts b/src/shared/contracts.ts
 --- a/src/shared/contracts.ts
 +++ b/src/shared/contracts.ts
-@@ -1302,6 +1302,7 @@
+@@ -1302,6 +1302,7 @@ export interface CanvasTTYApi {
    appVersion(): Promise<string>;
    clipboard: {
      readText(): Promise<string>;
@@ -403,8 +419,8 @@ diff --git a/src/shared/contracts.ts b/src/shared/contracts.ts
      writeText(text: string): void;
    };
    external: {
-@@ -1470,6 +1471,7 @@
- 
+@@ -1470,6 +1471,7 @@ export interface CanvasTTYApi {
+
  export const IPC = {
    clipboardRead: "clipboard:read",
 +  clipboardHasImage: "clipboard:has-image",
@@ -414,15 +430,15 @@ diff --git a/src/shared/contracts.ts b/src/shared/contracts.ts
 diff --git a/tests/agent-browser-helper.test.mjs b/tests/agent-browser-helper.test.mjs
 --- a/tests/agent-browser-helper.test.mjs
 +++ b/tests/agent-browser-helper.test.mjs
-@@ -181,6 +181,7 @@
- 
+@@ -181,6 +181,7 @@ test("MCP screenshot result uses image content without duplicating base64 in tex
+
  test("PTY bridge keeps the one-time capability in child env only and honors the kill switch", () => {
    const revoked = [];
 +  const retained = [];
    const gateway = {
      isEnabled: true,
      setEnabled(value) { this.isEnabled = value; },
-@@ -195,7 +196,8 @@
+@@ -195,7 +196,8 @@ test("PTY bridge keeps the one-time capability in child env only and honors the
          authenticated: new Promise(() => {})
        };
      },
@@ -432,7 +448,7 @@ diff --git a/tests/agent-browser-helper.test.mjs b/tests/agent-browser-helper.te
    };
    const bridge = new AgentBrowserBridge(gateway, {
      helper: { command: "/usr/bin/node", args: ["/app/mcp-helper.mjs"] },
-@@ -214,7 +216,12 @@
+@@ -214,7 +216,12 @@ test("PTY bridge keeps the one-time capability in child env only and honors the
    assert.equal(launch.environment[AGENT_BROWSER_ENV.provider], "codex");
    assert.equal(JSON.stringify(launch.args).includes("one-time-secret-token"), false);
    assert.equal(JSON.stringify(launch.args).includes("terminal-id"), false);
@@ -443,12 +459,12 @@ diff --git a/tests/agent-browser-helper.test.mjs b/tests/agent-browser-helper.te
 +  launch.retainUntilExit();
 +  assert.deepEqual(retained, ["connection-id"]);
    assert.deepEqual(revoked, ["terminal-id"]);
- 
+
    const openCodeLaunch = bridge.prepareLaunch({
 diff --git a/tests/agent-browser-protocol-gateway.test.mjs b/tests/agent-browser-protocol-gateway.test.mjs
 --- a/tests/agent-browser-protocol-gateway.test.mjs
 +++ b/tests/agent-browser-protocol-gateway.test.mjs
-@@ -11,6 +11,7 @@
+@@ -11,6 +11,7 @@ import {
    AgentGateway,
    supportsAgentGatewayPlatform
  } from "../src/main/services/agent-browser/AgentGateway.ts";
@@ -456,10 +472,10 @@ diff --git a/tests/agent-browser-protocol-gateway.test.mjs b/tests/agent-browser
  import {
    AGENT_BRIDGE_PROTOCOL_VERSION,
    HEARTBEAT_EXPIRY_MS,
-@@ -423,6 +424,51 @@
+@@ -423,6 +424,51 @@ test("AgentGateway rejects expired and identity-mismatched capabilities", POSIX_
    await assert.rejects(expired.authenticated, /expired/i);
  });
- 
+
 +test("a live PTY can authenticate after the default pending TTL and cleanup still revokes it", POSIX_GATEWAY_TEST, async (t) => {
 +  let now = 1_000;
 +  const gateway = await startedGateway(t, core(), { now: () => now });
@@ -527,7 +543,7 @@ diff --git a/tests/app-shortcuts.test.mjs b/tests/app-shortcuts.test.mjs
    shortcutFromKeyboardEvent,
    shortcutFromPointerEvent
  } from "../src/renderer/src/lib/shortcuts.ts";
-@@ -70,3 +75,132 @@
+@@ -70,3 +75,132 @@ test("displays platform-neutral canvas navigation bindings with macOS key names"
    assert.equal(displayCanvasNavigationBinding("Ctrl+Alt+Meta+Space", true), "Ctrl+Option+Command+Space");
    assert.equal(displayCanvasNavigationBinding("Ctrl+Alt", false), "Ctrl+Alt");
  });
@@ -663,7 +679,7 @@ diff --git a/tests/app-shortcuts.test.mjs b/tests/app-shortcuts.test.mjs
 diff --git a/tests/auto-profile.test.mjs b/tests/auto-profile.test.mjs
 --- a/tests/auto-profile.test.mjs
 +++ b/tests/auto-profile.test.mjs
-@@ -79,7 +79,7 @@
+@@ -79,7 +79,7 @@ test("auto exists only where the CLI has a native auto mode; normal and YOLO are
    for (const provider of ["qwen", "opencode", "kimi", "cursor", "terminal"]) assert.equal(hasAutoMode(provider), false, provider);
    assert.throws(() => launch("qwen", "auto"), /qwen has no auto mode; use the normal profile/u);
    // Normal adds no permission flag and no sandbox.
@@ -675,10 +691,10 @@ diff --git a/tests/auto-profile.test.mjs b/tests/auto-profile.test.mjs
 diff --git a/tests/canvas-navigation-override.test.mjs b/tests/canvas-navigation-override.test.mjs
 --- a/tests/canvas-navigation-override.test.mjs
 +++ b/tests/canvas-navigation-override.test.mjs
-@@ -230,6 +230,53 @@
+@@ -230,6 +230,53 @@ test("modifier-only Meta full override does not swallow ordinary Command shortcu
    assert.equal(prevented, false);
  });
- 
+
 +test("macOS Select All, Copy and Paste reach the renderer without capturing other Command shortcuts", () => {
 +  const contents = new EventEmitter();
 +  const ignored = [];
@@ -732,7 +748,7 @@ diff --git a/tests/canvas-navigation-override.test.mjs b/tests/canvas-navigation
 diff --git a/tests/orchestration-launch-role.test.mjs b/tests/orchestration-launch-role.test.mjs
 --- a/tests/orchestration-launch-role.test.mjs
 +++ b/tests/orchestration-launch-role.test.mjs
-@@ -84,3 +84,60 @@
+@@ -84,3 +84,60 @@ test("disposing an orchestrator session revokes its capability", async (t) => {
    assert.ok(capability.capabilityToken);
    gateway.revokeTerminalSession(orchestrator.id);
  });
@@ -796,10 +812,10 @@ diff --git a/tests/orchestration-launch-role.test.mjs b/tests/orchestration-laun
 diff --git a/tests/terminal-launch.test.mjs b/tests/terminal-launch.test.mjs
 --- a/tests/terminal-launch.test.mjs
 +++ b/tests/terminal-launch.test.mjs
-@@ -14,6 +14,65 @@
+@@ -14,6 +14,65 @@ function available(provider, executable, options = {}) {
    };
  }
- 
+
 +test("Codex QA changes only the interactive launch and keeps the registry backend", () => {
 +  const environment = {
 +    CANVASTTY_CODEX_TUI_QA: "/qa/codex-tui",
@@ -862,12 +878,10 @@ diff --git a/tests/terminal-launch.test.mjs b/tests/terminal-launch.test.mjs
  test("Windows terminal selects built-in PowerShell", () => {
    const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
    const launch = resolveTerminalLaunch("terminal", "normal", [], {
-@@ -52,6 +111,23 @@
-   const providerCli = available("qwen", "/resolved/qwen");
-   const launch = resolveTerminalLaunch("qwen", "yolo", ["--mcp-config", "{}"], { providerCli });
+@@ -54,6 +113,23 @@ test("Qwen uses its native YOLO flag and keeps per-launch browser arguments", ()
    assert.deepEqual(launch.args, ["--yolo", "--mcp-config", "{}"]);
-+});
-+
+ });
+
 +test("Codex uses embedded mode only for scoped config and keeps native resume arguments", () => {
 +  const providerCli = available("codex", "/resolved/codex");
 +  const scopedConfig = ["-c", "hooks.Stop=[]"];
@@ -883,9 +897,11 @@ diff --git a/tests/terminal-launch.test.mjs b/tests/terminal-launch.test.mjs
 +    }).args,
 +    ["--no-daemon", ...scopedConfig, "resume", threadId]
 +  );
- });
- 
++});
++
  test("Claude keeps launch-scoped adapter arguments in their supplied order", () => {
+   const providerCli = available("claude", "/resolved/claude");
+   const launch = resolveTerminalLaunch("claude", "normal", ["--mcp-config", "{}"], { providerCli });
 diff --git a/tests/terminal-lifecycle.test.mjs b/tests/terminal-lifecycle.test.mjs
 --- a/tests/terminal-lifecycle.test.mjs
 +++ b/tests/terminal-lifecycle.test.mjs
@@ -894,13 +910,44 @@ diff --git a/tests/terminal-lifecycle.test.mjs b/tests/terminal-lifecycle.test.m
  import { readFile } from "node:fs/promises";
  import test from "node:test";
 +import * as terminalShortcuts from "../src/renderer/src/features/terminal/terminalShortcuts.ts";
- 
+
  const terminalCardPath = new URL(
    "../src/renderer/src/features/terminal/TerminalCard.tsx",
-@@ -10,6 +11,136 @@
+@@ -10,6 +11,167 @@ const appStylesPath = new URL("../src/renderer/src/styles/app.css", import.meta.
  const terminalManagerPath = new URL("../src/main/services/TerminalManager.ts", import.meta.url);
  const contractsPath = new URL("../src/shared/contracts.ts", import.meta.url);
- 
+
++test("actual macOS Codex handler preserves all three Enter chords before xterm can collapse them", async () => {
++  const source = await readFile(terminalCardPath, "utf8");
++  const body = source.match(/terminal\.attachCustomKeyEventHandler\(\(event\) => \{([\s\S]*?)^    \}\);/m)?.[1];
++  assert.ok(body);
++  const writes = [];
++  const window = { canvasTTY: {
++    window: { isMacOS: true },
++    terminal: { input: (id, sequence) => writes.push([id, sequence]) }
++  } };
++  const handler = new Function("window", "session", ...Object.keys(terminalShortcuts),
++    `return (event) => {${body}}`)(window, { id: "draft", provider: "codex" }, ...Object.values(terminalShortcuts));
++  for (const code of ["Enter", "NumpadEnter"]) {
++    for (const [modifiers, sequence] of [
++      [{}, "\r"], [{ shiftKey: true }, "\u001b[13;2u"], [{ metaKey: true }, "\u001b[13;9u"]
++    ]) {
++      let prevented = false;
++      let stopped = false;
++      const event = { type: "keydown", key: "Enter", code, ctrlKey: false, altKey: false,
++        shiftKey: false, metaKey: false, ...modifiers,
++        preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } };
++      assert.equal(handler(event), false, "xterm must not encode these keys as identical CR bytes");
++      assert.deepEqual([prevented, stopped, writes.pop()], [true, true, ["draft", sequence]]);
++    }
++  }
++  for (const modifiers of [{ ctrlKey: true }, { altKey: true }, { metaKey: true, shiftKey: true }, { type: "keyup" }]) {
++    assert.equal(handler({ type: "keydown", key: "Enter", code: "Enter", ctrlKey: false, altKey: false,
++      shiftKey: false, metaKey: false, ...modifiers }), true);
++  }
++  assert.deepEqual(writes, []);
++});
++
 +test("Command+A dispatches native Codex selection and leaves other providers and CLI keys alone", async () => {
 +  const source = await readFile(terminalCardPath, "utf8");
 +  const body = source.match(/terminal\.attachCustomKeyEventHandler\(\(event\) => \{([\s\S]*?)^    \}\);/m)?.[1];
@@ -1034,10 +1081,10 @@ diff --git a/tests/terminal-lifecycle.test.mjs b/tests/terminal-lifecycle.test.m
  test("palette changes retheme the live xterm without recreating it", async () => {
    const source = await readFile(terminalCardPath, "utf8");
    const mountDependencies = effectDependenciesContaining(source, "new Terminal({");
-@@ -27,11 +158,19 @@
+@@ -27,11 +189,19 @@ test("terminal copy shortcuts write the xterm selection without reaching the PTY
    assert.match(source, /return false;/);
  });
- 
+
 +test("Command copy reaches a CLI-owned selection without sending Control-C", async () => {
 +  const source = await readFile(terminalCardPath, "utf8");
 +  assert.match(source, /shouldCopyTerminalSelection\(event, terminal\.hasSelection\(\) \|\| window\.canvasTTY\.window\.isMacOS\)/);
@@ -1046,13 +1093,13 @@ diff --git a/tests/terminal-lifecycle.test.mjs b/tests/terminal-lifecycle.test.m
 +
  test("terminal paste reads the trusted clipboard bridge and uses xterm paste semantics", async () => {
    const source = await readFile(terminalCardPath, "utf8");
- 
+
    assert.match(source, /window\.canvasTTY\.clipboard\.readText\(\)/);
    assert.match(source, /terminal\.paste\(text\)/);
 +  assert.match(source, /window\.canvasTTY\.clipboard\.hasImage\(\)/);
 +  assert.match(source, /window\.canvasTTY\.terminal\.input\(session\.id, "\\u0016"\)/);
  });
- 
+
  test("terminal mouse coordinates are adapted for a transformed canvas", async () => {
 diff --git a/tests/terminal-shortcuts.test.mjs b/tests/terminal-shortcuts.test.mjs
 --- a/tests/terminal-shortcuts.test.mjs
@@ -1072,12 +1119,11 @@ diff --git a/tests/terminal-shortcuts.test.mjs b/tests/terminal-shortcuts.test.m
 +  shouldSelectCodexDraft,
    shouldTogglePixelSkinMasterView
  } from "../src/renderer/src/features/terminal/terminalShortcuts.ts";
- 
-@@ -19,6 +22,41 @@
-   metaKey: false,
+
+@@ -20,6 +23,41 @@ const keydown = {
    altKey: false
  };
-+
+
 +test("Command+A selects only a macOS Codex draft with the unmodified physical or layout chord", () => {
 +  const select = { ...keydown, key: "a", code: "KeyA", metaKey: true };
 +  assert.equal(shouldSelectCodexDraft(select, true, "codex"), true);
@@ -1112,6 +1158,7 @@ diff --git a/tests/terminal-shortcuts.test.mjs b/tests/terminal-shortcuts.test.m
 +    { ...keydown, key: "k", code: "KeyK", metaKey: true }
 +  ]) assert.equal(isMacTerminalClipboardShortcut(event), false);
 +});
- 
++
  test("copies a terminal selection with platform copy shortcuts", () => {
    assert.equal(shouldCopyTerminalSelection({ ...keydown, ctrlKey: true }, true), true);
+   assert.equal(shouldCopyTerminalSelection({ ...keydown, ctrlKey: true, shiftKey: true }, true), true);
