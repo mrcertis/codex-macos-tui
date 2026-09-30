@@ -318,6 +318,7 @@ pub(crate) struct AppServerSession {
     task_search_generation: Arc<AtomicU64>,
     remote_cwd_override: Option<PathBuf>,
     thread_params_mode: ThreadParamsMode,
+    resume_permission_settings: ResumePermissionSettings,
     history_support: ThreadHistorySupport,
     thread_settings_update_supported: bool,
     default_model: Option<String>,
@@ -331,6 +332,13 @@ pub(crate) struct AppServerSession {
 pub(crate) enum ThreadParamsMode {
     Embedded,
     Remote,
+}
+
+/// Keeps ordinary remote resumes server-owned while preserving an owned local launch profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResumePermissionSettings {
+    RestoreFromThread,
+    OverrideFromLaunchConfig,
 }
 
 /// Determines where model settings come from when resuming a thread.
@@ -428,6 +436,7 @@ impl AppServerSession {
             task_search_generation: Arc::new(AtomicU64::new(0)),
             remote_cwd_override: None,
             thread_params_mode,
+            resume_permission_settings: ResumePermissionSettings::RestoreFromThread,
             history_support: ThreadHistorySupport::Paginated,
             thread_settings_update_supported: true,
             default_model: None,
@@ -512,6 +521,14 @@ impl AppServerSession {
 
     pub(crate) fn with_remote_cwd_override(mut self, remote_cwd_override: Option<PathBuf>) -> Self {
         self.remote_cwd_override = remote_cwd_override;
+        self
+    }
+
+    pub(crate) fn with_resume_permission_settings(
+        mut self,
+        settings: ResumePermissionSettings,
+    ) -> Self {
+        self.resume_permission_settings = settings;
         self
     }
 
@@ -2061,6 +2078,7 @@ fn thread_resume_params_from_config(
     thread_params_mode: ThreadParamsMode,
     remote_cwd_override: Option<&std::path::Path>,
     model_settings: ResumeModelSettings,
+    permission_settings: ResumePermissionSettings,
 ) -> ThreadResumeParams {
     if model_settings == ResumeModelSettings::PreserveExistingThread {
         return ThreadResumeParams {
@@ -2068,7 +2086,14 @@ fn thread_resume_params_from_config(
             ..ThreadResumeParams::default()
         };
     }
-    let permissions = permissions_selection_from_config(&config, thread_params_mode);
+    let permissions = if permission_settings == ResumePermissionSettings::OverrideFromLaunchConfig {
+        config
+            .permissions
+            .active_permission_profile()
+            .map(permission_profile_id_from_active_profile)
+    } else {
+        permissions_selection_from_config(&config, thread_params_mode)
+    };
     let sandbox = permissions
         .is_none()
         .then(|| {
@@ -2113,7 +2138,9 @@ fn thread_resume_params_from_config(
         ),
         ..ThreadResumeParams::default()
     };
-    if thread_params_mode == ThreadParamsMode::Remote {
+    if thread_params_mode == ThreadParamsMode::Remote
+        && permission_settings == ResumePermissionSettings::RestoreFromThread
+    {
         // Resuming restores the server's saved permission settings, including named profiles.
         params.approval_policy = None;
         params.approvals_reviewer = None;
@@ -2486,6 +2513,10 @@ mod workspace_roots_tests;
 #[cfg(test)]
 #[path = "app_server_session/prompt_history_tests.rs"]
 mod prompt_history_tests;
+
+#[cfg(test)]
+#[path = "app_server_session/owned_local_resume_tests.rs"]
+mod owned_local_resume_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3151,6 +3182,7 @@ mod tests {
             ThreadParamsMode::Remote,
             /*remote_cwd_override*/ None,
             ResumeModelSettings::OverrideFromCurrentConfig,
+            ResumePermissionSettings::RestoreFromThread,
         );
         let fork = thread_fork_params_from_config(
             config,
@@ -3196,6 +3228,7 @@ mod tests {
             ThreadParamsMode::Remote,
             Some(remote_cwd.as_path()),
             ResumeModelSettings::RestoreFromThread,
+            ResumePermissionSettings::RestoreFromThread,
         );
 
         assert_eq!(resume.cwd, Some(remote_cwd.to_string_lossy().to_string()));
@@ -3292,6 +3325,7 @@ mod tests {
             ThreadParamsMode::Remote,
             Some(remote_cwd.as_path()),
             ResumeModelSettings::OverrideFromCurrentConfig,
+            ResumePermissionSettings::RestoreFromThread,
         );
         let fork = thread_fork_params_from_config(
             config,
@@ -3347,6 +3381,7 @@ mod tests {
             ThreadParamsMode::Embedded,
             /*remote_cwd_override*/ None,
             ResumeModelSettings::OverrideFromCurrentConfig,
+            ResumePermissionSettings::RestoreFromThread,
         );
         let fork = thread_fork_params_from_config(
             config,
@@ -3393,6 +3428,7 @@ mod tests {
             ThreadParamsMode::Embedded,
             /*remote_cwd_override*/ None,
             ResumeModelSettings::RestoreFromThread,
+            ResumePermissionSettings::RestoreFromThread,
         );
 
         assert_eq!(params.model, None);
@@ -3424,6 +3460,7 @@ mod tests {
             ThreadParamsMode::Embedded,
             /*remote_cwd_override*/ None,
             ResumeModelSettings::PreserveExistingThread,
+            ResumePermissionSettings::RestoreFromThread,
         );
 
         assert_eq!(
@@ -3742,6 +3779,7 @@ mod tests {
                 mode,
                 /*remote_cwd_override*/ None,
                 ResumeModelSettings::OverrideFromCurrentConfig,
+                ResumePermissionSettings::RestoreFromThread,
             );
             let fork = thread_fork_params_from_config(
                 config.clone(),
@@ -3853,6 +3891,7 @@ mod tests {
             ThreadParamsMode::Embedded,
             /*remote_cwd_override*/ None,
             ResumeModelSettings::OverrideFromCurrentConfig,
+            ResumePermissionSettings::RestoreFromThread,
         );
         let control_fork = thread_fork_params_from_config(
             config.clone(),
@@ -3883,6 +3922,7 @@ mod tests {
             ThreadParamsMode::Embedded,
             /*remote_cwd_override*/ None,
             ResumeModelSettings::OverrideFromCurrentConfig,
+            ResumePermissionSettings::RestoreFromThread,
         );
         let treatment_fork = thread_fork_params_from_config(
             config,

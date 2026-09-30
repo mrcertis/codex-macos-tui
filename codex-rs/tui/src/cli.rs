@@ -13,6 +13,10 @@ pub struct Cli {
     #[clap(skip)]
     pub daemon_cli_executable: Option<AbsolutePathBuf>,
 
+    /// The standalone frontend launcher owns the connected local backend and its launch profile.
+    #[clap(skip)]
+    pub owned_local_server: bool,
+
     /// Optional user prompt to start the session.
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     pub prompt: Option<String>,

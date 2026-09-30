@@ -27,6 +27,7 @@ pub use app::DisconnectInfo;
 pub use app::ExitReason;
 pub use app::ResumableThread;
 use app_server_session::AppServerSession;
+use app_server_session::ResumePermissionSettings;
 use app_server_session::ThreadParamsMode;
 use codex_app_server_client::AppServerClient;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
@@ -1147,6 +1148,11 @@ async fn run_ratatui_app(
     startup_draft: startup_draft::StartupDraft,
 ) -> color_eyre::Result<AppExitInfo> {
     let uses_remote_workspace = app_server_target.uses_remote_workspace();
+    let resume_permission_settings = if cli.owned_local_server {
+        ResumePermissionSettings::OverrideFromLaunchConfig
+    } else {
+        ResumePermissionSettings::RestoreFromThread
+    };
     let workload_identity_selected = is_workload_identity_selected();
     color_eyre::install()?;
 
@@ -1227,7 +1233,8 @@ async fn run_ratatui_app(
             return Err(err.into());
         }
     }
-    .with_remote_cwd_override(remote_cwd_override.clone());
+    .with_remote_cwd_override(remote_cwd_override.clone())
+    .with_resume_permission_settings(resume_permission_settings);
     if let Some(provider) = manually_selected_oss_provider.as_deref() {
         match startup_draft
             .run_until(
@@ -1787,6 +1794,7 @@ async fn run_ratatui_app(
                 AppServerSession::new(app_server, app_server_target.thread_params_mode())
                     .with_local_codex_home(&config.codex_home)
                     .with_remote_cwd_override(remote_cwd_override.clone())
+                    .with_resume_permission_settings(resume_permission_settings)
             }
             Ok(Err(err)) => {
                 terminal_restore_guard.restore_silently();
