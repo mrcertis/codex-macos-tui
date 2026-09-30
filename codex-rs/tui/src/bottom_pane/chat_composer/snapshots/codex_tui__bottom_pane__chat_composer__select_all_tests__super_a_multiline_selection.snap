@@ -1,0 +1,26 @@
+---
+source: tui/src/bottom_pane/chat_composer/select_all_tests.rs
+expression: "format!(\"{buffer:?}\")"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 40, height: 8 },
+    content: [
+        "                                        ",
+        "› Привет 👋                             ", // hidden by multi-width symbols: [(10, " ")]
+        "  весь черновик выделен                 ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                     100% context left  ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 1, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: REVERSED,
+        x: 10, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: REVERSED,
+        x: 23, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

@@ -253,6 +253,8 @@
 //! composer flushes/clears any in-flight burst state so it cannot leak into subsequent input.
 //! Mouse edits flush pending typing; selection and copy behavior lives in [`mouse`]. Confirmed
 //! copies clear the selection while preserving the draft and cursor.
+//! Super+A selects the whole editable draft after flushing accepted paste-burst input. It reuses
+//! editable selection for copy, replacement, and deletion, without changing Ctrl+A or Home.
 //!
 //! For the detailed burst state machine, see `codex-rs/tui/src/bottom_pane/paste_burst.rs`.
 //!
@@ -1969,6 +1971,22 @@ impl ChatComposer {
     }
 
     fn handle_key_event_inner(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        if key_event.code == KeyCode::Char('a')
+            && key_event.modifiers == KeyModifiers::SUPER
+            && !self.blocks_direct_input
+            && self.history_search.is_none()
+            && self.draft.textarea.vim_query().is_none()
+        {
+            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
+                self.apply_paste(pasted);
+            }
+            self.draft.paste_burst.clear_window_after_non_char();
+            self.draft.textarea.select_all();
+            self.attachments.clear_remote_image_selection();
+            self.sync_popups();
+            return (InputResult::None, true);
+        }
+
         if self.history_search.is_none()
             && !self.popups.active()
             && self.draft.textarea.wants_vim_search_key(key_event)
@@ -5059,6 +5077,10 @@ mod embedded_input_tests;
 #[cfg(test)]
 #[path = "chat_composer/paste_tests.rs"]
 mod paste_tests;
+
+#[cfg(test)]
+#[path = "chat_composer/select_all_tests.rs"]
+mod select_all_tests;
 
 #[cfg(test)]
 #[path = "chat_composer/snapshot_tests.rs"]

@@ -9,7 +9,7 @@ use ratatui::layout::Position;
 
 #[derive(Debug)]
 pub(super) struct MouseSelection {
-    pending_copy: Option<(u64, Range<usize>)>,
+    pending_copy: Option<(u64, Range<usize>, usize)>,
     origin: Range<usize>,
     unit: SelectionUnit,
     dragging: bool,
@@ -17,11 +17,11 @@ pub(super) struct MouseSelection {
 }
 
 impl TextArea {
-    pub(in crate::bottom_pane) fn defer_copy(&mut self, id: u64) {
+    pub(in crate::bottom_pane) fn defer_copy(&mut self, id: u64, characters: usize) {
         if let Some(range) = self.mouse_selection_range()
             && let Some(selection) = &mut self.mouse_selection
         {
-            selection.pending_copy = Some((id, range));
+            selection.pending_copy = Some((id, range, characters));
         }
     }
 
@@ -34,11 +34,10 @@ impl TextArea {
         if pending.0 != completion.0 {
             return None;
         }
-        let (_, range) = self.mouse_selection.as_mut()?.pending_copy.take()?;
+        let (_, range, characters) = self.mouse_selection.as_mut()?.pending_copy.take()?;
         if !current || self.mouse_selection_range().as_ref() != Some(&range) {
             return None;
         }
-        let characters = self.text()[range].chars().count();
         if completion.1 == Ok(crate::clipboard_copy::CopyStatus::Confirmed) {
             self.set_cursor(self.cursor());
         }
@@ -55,6 +54,20 @@ impl TextArea {
         if let Some(selection) = &mut self.mouse_selection {
             selection.dragging = false;
         }
+    }
+
+    pub(crate) fn select_all(&mut self) {
+        self.last_click = None;
+        self.preferred_col = None;
+        self.clear_vim_replace_recovery();
+        self.vim_pending = VimPending::None;
+        self.mouse_selection = (!self.text.is_empty()).then_some(MouseSelection {
+            pending_copy: None,
+            origin: 0..self.text.len(),
+            unit: SelectionUnit::Character,
+            dragging: false,
+            moved: true,
+        });
     }
 
     pub(crate) fn mouse_selection_range(&self) -> Option<Range<usize>> {

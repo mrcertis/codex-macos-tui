@@ -2,6 +2,7 @@
 //! editable text using the textarea's last rendered viewport and hides completion suggestions.
 //! Double/triple clicks select words/logical lines using the transcript's shared gesture rules.
 //! Copy preserves the draft and cursor; confirmed copies clear selection for every gesture.
+//! A full draft copy expands hidden paste payloads while retaining literal non-paste elements.
 
 use super::*;
 use crate::clipboard_copy::CopyStatus;
@@ -49,11 +50,24 @@ impl ChatComposer {
         self.draft.paste_burst.clear_window_after_non_char();
         let range = self.draft.textarea.mouse_selection_range()?;
         self.end_mouse_drag();
-        let text = &self.draft.textarea.text()[range];
+        let expanded = (range.start == 0
+            && range.end == self.draft.textarea.text().len()
+            && !self.draft.pending_pastes.is_empty())
+        .then(|| {
+            Self::expand_pending_pastes(
+                self.draft.textarea.text(),
+                self.draft.textarea.text_elements(),
+                &self.draft.pending_pastes,
+            )
+            .0
+        });
+        let text = expanded
+            .as_deref()
+            .unwrap_or(&self.draft.textarea.text()[range]);
         let char_count = text.chars().count();
         let result = copy(text);
         if let Ok(CopyStatus::Pending(id)) = result {
-            self.draft.textarea.defer_copy(id);
+            self.draft.textarea.defer_copy(id, char_count);
         }
         if result == Ok(CopyStatus::Confirmed) {
             self.draft.textarea.set_cursor(self.draft.textarea.cursor());
