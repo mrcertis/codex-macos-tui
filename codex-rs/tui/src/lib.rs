@@ -158,6 +158,7 @@ mod ide_context;
 mod inline_visualization;
 pub(crate) mod insert_history;
 pub use insert_history::insert_history_lines;
+mod canvastty_keyboard;
 mod footer_hint;
 mod key_hint;
 mod keymap;

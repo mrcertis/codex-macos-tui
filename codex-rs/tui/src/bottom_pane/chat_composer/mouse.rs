@@ -3,6 +3,8 @@
 //! Double/triple clicks select words/logical lines using the transcript's shared gesture rules.
 //! Copy preserves the draft and cursor; confirmed copies clear selection for every gesture.
 //! A full draft copy expands hidden paste payloads while retaining literal non-paste elements.
+//! With CanvasTTY native editing its copy and cut keys act here too; cut deletes the selection
+//! once the clipboard accepted (or queued) the text.
 
 use super::*;
 use crate::clipboard_copy::CopyStatus;
@@ -33,7 +35,13 @@ impl ChatComposer {
         event: &TuiEvent,
         copy: impl FnOnce(&str) -> Result<CopyStatus, String>,
     ) -> Option<(usize, Result<CopyStatus, String>)> {
-        let copy_requested = matches!(event, TuiEvent::Key(key) if crate::text_selection::is_copy_key(*key))
+        let native = self.config.canvastty_native_editing;
+        let cut = native
+            && matches!(event, TuiEvent::Key(key)
+                if self.canvastty_keys.cut.is_some_and(|cut| cut.is_press(*key)));
+        let copy_requested = cut
+            || matches!(event, TuiEvent::Key(key) if crate::text_selection::is_copy_key(*key)
+                || (native && self.canvastty_keys.copy.is_some_and(|copy| copy.is_press(*key))))
             || matches!(event, TuiEvent::Mouse(mouse)
                     if mouse.kind == MouseEventKind::Down(MouseButton::Right)
                         && self.draft.textarea.contains_mouse(*mouse));
@@ -66,6 +74,11 @@ impl ChatComposer {
             .unwrap_or(&self.draft.textarea.text()[range]);
         let char_count = text.chars().count();
         let result = copy(text);
+        if cut && result.is_ok() {
+            self.draft.textarea.delete_mouse_selection();
+            self.sync_popups();
+            return Some((char_count, result));
+        }
         if let Ok(CopyStatus::Pending(id)) = result {
             self.draft.textarea.defer_copy(id, char_count);
         }

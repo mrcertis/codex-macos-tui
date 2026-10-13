@@ -12,8 +12,6 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crossterm::SynchronizedUpdate;
-use crossterm::event::KeyCode;
-use crossterm::event::KeyModifiers;
 use ratatui::layout::Size;
 use ratatui::style::Stylize;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -292,18 +290,13 @@ impl StartupDraftPump {
 
     fn apply_keymap(&mut self, mut keymap: RuntimeKeymap) {
         if self.canvastty_native_editing {
-            keymap.composer.submit = vec![crate::key_hint::KeyBinding::new(
-                KeyCode::Enter,
-                KeyModifiers::SUPER,
-            )];
+            let keys = crate::canvastty_keyboard::CanvasttyKeyboard::current();
+            keymap.composer.submit = keys.submit_keys();
             keymap.composer.queue.clear();
             let editor = std::sync::Arc::make_mut(&mut keymap.editor);
-            for binding in [
-                crate::key_hint::plain(KeyCode::Enter),
-                crate::key_hint::shift(KeyCode::Enter),
-            ] {
-                if !editor.insert_newline.contains(&binding) {
-                    editor.insert_newline.push(binding);
+            for binding in &keys.newline {
+                if !editor.insert_newline.contains(binding) {
+                    editor.insert_newline.push(*binding);
                 }
             }
         }

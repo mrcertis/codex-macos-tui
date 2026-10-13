@@ -106,3 +106,116 @@ fn native_enter_shortcut_help_shows_command_enter_and_newline() {
         },
     );
 }
+
+#[test]
+fn canvastty_keyboard_rebinds_submit_newline_and_select_all() {
+    let mut composer = native_composer();
+    composer.set_canvastty_keyboard(
+        CanvasttyKeyboard::from_json(
+            r#"{"submit":"Ctrl+Enter","newline":"Alt+Enter","newlineAlternate":"","selectAll":"Ctrl+L"}"#,
+        ),
+        &RuntimeKeymap::defaults(),
+    );
+    composer.insert_str("a");
+    composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    composer.insert_str("b");
+    let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER));
+    assert!(
+        matches!(result, InputResult::None),
+        "the old submit key no longer sends"
+    );
+    composer.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    assert_eq!(
+        composer.draft.textarea.mouse_selection_range(),
+        Some(0.."a\nb".len()),
+        "Ctrl+L selected the whole draft"
+    );
+    let (result, _) =
+        composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+    assert!(matches!(result, InputResult::Submitted { text, .. } if text == "a\nb"));
+
+    // A plain Enter no CanvasTTY key uses keeps Codex's own submit.
+    composer.insert_str("plain");
+    let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(result, InputResult::Submitted { text, .. } if text == "plain"));
+    assert_eq!(
+        composer.submit_keys,
+        vec![
+            KeyBinding::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            KeyBinding::new(KeyCode::Enter, KeyModifiers::NONE),
+        ]
+    );
+    assert_eq!(
+        composer.footer.insert_newline_key,
+        Some(KeyBinding::new(KeyCode::Enter, KeyModifiers::ALT).into())
+    );
+}
+
+#[test]
+fn canvastty_keyboard_copies_cuts_and_deletes_a_selected_draft() {
+    use crate::clipboard_copy::CopyStatus;
+    use crate::tui::TuiEvent;
+
+    let mut composer = native_composer();
+    composer.set_canvastty_keyboard(
+        CanvasttyKeyboard::from_json(r#"{"copy":"Ctrl+Y","cut":"Ctrl+K","clear":"Ctrl+D"}"#),
+        &RuntimeKeymap::defaults(),
+    );
+    let key = |code, modifiers| TuiEvent::Key(KeyEvent::new(code, modifiers));
+    let mut copied = String::new();
+    composer.insert_str("без выделения");
+    let result = composer.copy_selection(&key(KeyCode::Char('k'), KeyModifiers::CONTROL), |_| {
+        panic!("nothing is selected")
+    });
+    assert_eq!(
+        result, None,
+        "without a selection the key keeps its meaning"
+    );
+
+    composer.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SUPER));
+    let result = composer.copy_selection(&key(KeyCode::Char('y'), KeyModifiers::CONTROL), |text| {
+        copied = text.to_string();
+        Ok(CopyStatus::Confirmed)
+    });
+    assert_eq!(
+        (result, copied.as_str(), composer.current_text()),
+        (
+            Some((13, Ok(CopyStatus::Confirmed))),
+            "без выделения",
+            "без выделения".to_string()
+        )
+    );
+
+    composer.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SUPER));
+    let result = composer.copy_selection(&key(KeyCode::Char('k'), KeyModifiers::CONTROL), |text| {
+        copied = format!("cut: {text}");
+        Ok(CopyStatus::Confirmed)
+    });
+    assert_eq!(
+        (result, copied.as_str(), composer.current_text()),
+        (
+            Some((13, Ok(CopyStatus::Confirmed))),
+            "cut: без выделения",
+            String::new()
+        )
+    );
+
+    composer.insert_str("удалить");
+    composer.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SUPER));
+    composer.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+    assert_eq!(composer.current_text(), "");
+    let failed = composer.copy_selection(&key(KeyCode::Char('k'), KeyModifiers::CONTROL), |_| {
+        Err("no clipboard".to_string())
+    });
+    assert_eq!(failed, None, "an empty draft has nothing to cut");
+    composer.insert_str("keep");
+    composer.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SUPER));
+    composer.copy_selection(&key(KeyCode::Char('k'), KeyModifiers::CONTROL), |_| {
+        Err("no clipboard".to_string())
+    });
+    assert_eq!(
+        composer.current_text(),
+        "keep",
+        "a failed copy cuts nothing"
+    );
+}

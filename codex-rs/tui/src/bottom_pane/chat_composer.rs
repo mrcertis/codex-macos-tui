@@ -282,6 +282,7 @@
 //! overall state machine, since it affects which transitions are even possible from a given UI
 //! state.
 //!
+use crate::canvastty_keyboard::CanvasttyKeyboard;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::ShortcutHint;
@@ -653,6 +654,8 @@ pub(crate) struct ChatComposer {
     vim_history: VimHistory,
     submit_keys: Vec<KeyBinding>,
     queue_keys: Vec<KeyBinding>,
+    /// CanvasTTY's editor keys for the main draft; used only with `canvastty_native_editing`.
+    canvastty_keys: CanvasttyKeyboard,
     toggle_shortcuts_keys: Vec<KeyBinding>,
     history_search_previous_keys: Vec<KeyBinding>,
     history_search_next_keys: Vec<KeyBinding>,
@@ -825,6 +828,7 @@ impl ChatComposer {
             vim_history: VimHistory::default(),
             submit_keys: vec![key_hint::plain(KeyCode::Enter)],
             queue_keys: vec![key_hint::plain(KeyCode::Tab)],
+            canvastty_keys: CanvasttyKeyboard::current().clone(),
             toggle_shortcuts_keys: vec![
                 key_hint::plain(KeyCode::Char('?')),
                 key_hint::shift(KeyCode::Char('?')),
@@ -1082,11 +1086,21 @@ impl ChatComposer {
             keymap.primary_hint(KeymapContext::Chat, "increase_reasoning_effort");
         self.footer.toggle_voice_key = keymap.primary_hint(KeymapContext::Chat, "toggle_voice");
         if self.config.canvastty_native_editing {
-            self.submit_keys = vec![KeyBinding::new(KeyCode::Enter, KeyModifiers::SUPER)];
+            self.submit_keys = self.canvastty_keys.submit_keys();
             self.queue_keys.clear();
-            self.footer.queue_key = Some(self.submit_keys[0].into());
-            self.footer.insert_newline_key = Some(key_hint::plain(KeyCode::Enter).into());
+            self.footer.queue_key = Some(self.canvastty_keys.submit.into());
+            self.footer.insert_newline_key = Some(self.canvastty_keys.newline[0].into());
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_canvastty_keyboard(
+        &mut self,
+        keys: CanvasttyKeyboard,
+        keymap: &RuntimeKeymap,
+    ) {
+        self.canvastty_keys = keys;
+        self.set_keymap_bindings(keymap);
     }
 
     /// Startup handoff must use the same effective submit key as the live draft.
@@ -1991,8 +2005,12 @@ impl ChatComposer {
     }
 
     fn handle_key_event_inner(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
-        if key_event.code == KeyCode::Char('a')
-            && key_event.modifiers == KeyModifiers::SUPER
+        let select_all = if self.config.canvastty_native_editing {
+            self.canvastty_keys.select_all.is_press(key_event)
+        } else {
+            key_event.code == KeyCode::Char('a') && key_event.modifiers == KeyModifiers::SUPER
+        };
+        if select_all
             && !self.blocks_direct_input
             && self.history_search.is_none()
             && self.draft.textarea.vim_query().is_none()
@@ -2003,6 +2021,22 @@ impl ChatComposer {
             self.draft.paste_burst.clear_window_after_non_char();
             self.draft.textarea.select_all();
             self.attachments.clear_remote_image_selection();
+            self.sync_popups();
+            return (InputResult::None, true);
+        }
+        // CanvasTTY's delete key removes a selected draft; without a selection it keeps its meaning.
+        if self.config.canvastty_native_editing
+            && self
+                .canvastty_keys
+                .clear
+                .is_some_and(|clear| clear.is_press(key_event))
+            && self.draft.textarea.mouse_selection_range().is_some()
+            && !self.blocks_direct_input
+            && self.history_search.is_none()
+            && self.draft.textarea.vim_query().is_none()
+        {
+            self.draft.textarea.delete_mouse_selection();
+            self.draft.paste_burst.clear_window_after_non_char();
             self.sync_popups();
             return (InputResult::None, true);
         }
@@ -2018,19 +2052,17 @@ impl ChatComposer {
             return self.handle_history_search_key(key_event);
         }
 
+        let canvastty_submit =
+            self.config.canvastty_native_editing && self.canvastty_keys.submit.is_press(key_event);
         if self.config.canvastty_native_editing
             && self.draft.textarea.vim_query().is_none()
-            && key_event.code == KeyCode::Enter
-            && matches!(
-                key_event.modifiers,
-                KeyModifiers::NONE | KeyModifiers::SHIFT | KeyModifiers::SUPER
-            )
+            && (canvastty_submit || self.canvastty_keys.newline.is_pressed(key_event))
         {
             if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
                 self.apply_paste(pasted);
             }
             self.draft.paste_burst.clear_window_after_non_char();
-            if key_event.modifiers == KeyModifiers::SUPER {
+            if canvastty_submit {
                 let result = if matches!(&self.popups.active, ActivePopup::Command(popup) if popup.selected_item().is_some())
                 {
                     self.handle_key_event_with_slash_popup(KeyEvent::new(
